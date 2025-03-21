@@ -1,0 +1,29 @@
+Engineering Meeting - Data Pipeline Discussion
+Date: 2023-10-15
+Participants: Alex, Jamie
+
+Alex: Hey Jamie, I've been looking at the query performance issues we've been having with our columnar datasource. The queries are taking way too long, especially for the analytics dashboard.
+
+Jamie: Yeah, I've noticed that too. What are you thinking?
+
+Alex: I'm considering moving the whole thing over to ETL pipelines. We could set up a nightly job that processes the data and creates deduplicated downstream tables optimized for our query patterns.
+
+Jamie: That's an interesting approach. How would that help with the query runtime?
+
+Alex: Well, right now we're doing a lot of complex transformations at query time. If we move those transformations to an ETL process, we can pre-compute the results and store them in a format that's optimized for our specific queries.
+
+Jamie: And the deduplication part?
+
+Alex: That's a big issue with our current setup. We have a lot of duplicate data that's slowing down our queries. By deduplicating during the ETL process, we can significantly reduce the data volume and improve query performance.
+
+Jamie: What about data freshness? The analytics team sometimes needs near real-time data.
+
+Alex: That's a good point. We might need to supplement the nightly ETL with a streaming process for certain high-priority metrics. But for most of the dashboard, I think the nightly refresh would be sufficient.
+
+Jamie: Sounds reasonable. What about the implementation complexity? Are we looking at a significant refactoring effort?
+
+Alex: It would definitely require some work, but I think the performance benefits would justify it. We could start with a proof of concept on one of the smaller data sets to validate the approach.
+
+Jamie: Alright, let's put together a proposal for the next sprint planning. I think the team would be on board if we can demonstrate the performance improvements.
+
+Alex: Great, I'll start working on a design doc. Thanks for the input!

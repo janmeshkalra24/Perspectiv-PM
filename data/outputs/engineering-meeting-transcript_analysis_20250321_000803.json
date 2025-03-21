@@ -1,0 +1,45 @@
+{
+  "transcript_file": "data/sample_transcripts/engineering-meeting-transcript.txt",
+  "analysis_timestamp": "20250321_000803",
+  "api_provider": "ollama",
+  "model": "llama2",
+  "chain_of_thought": true,
+  "identified_topics": [
+    "Deduplication: The team is looking to reduce duplicate data to improve query performance",
+    "Business Implications",
+    "The team is looking to improve query performance, especially for the analytics dashboard",
+    "Technical Context",
+    "Questions for an LLM",
+    "Can you explain what a data pipeline is and how it can improve query performance"
+  ],
+  "probing_questions": [
+    "Can you explain what a data pipeline is in simple terms? How does it improve query performance?",
+    "What are some common issues with deduplication that we're trying to address? How will ETL help resolve these issues?",
+    "How does the proposed ETL process fit into our project timeline and resource allocation? Are there any dependencies or risks we need to be aware of?",
+    "Can you explain the concept of data freshness in the context of our analytics dashboard? How will ETL help us achieve this goal?",
+    "What are some potential risks or dependencies that we need to consider when implementing an ETL process? How can we mitigate these risks?",
+    "How will the proposed ETL process impact our deliverables and project scope? Are there any additional tasks or resources required?",
+    "Can you explain why we're considering a nightly ETL job instead of a more frequent process? What are the benefits and drawbacks of each approach?",
+    "How will we handle data quality issues during the ETL process? Are there any additional steps we need to take to ensure data accuracy?",
+    "Can you explain the concept of data pre-computation in the context of our analytics dashboard? How will it help improve query performance?",
+    "10. Are there any potential security risks associated with the proposed ETL process? How can we mitigate these risks?"
+  ],
+  "categorized_questions": {
+    "Technical Concepts": [
+      "Can you explain what a data pipeline is in simple terms? How does it improve query performance?",
+      "How does the proposed ETL process fit into our project timeline and resource allocation? Are there any dependencies or risks we need to be aware of?",
+      "Can you explain the concept of data freshness in the context of our analytics dashboard? How will ETL help us achieve this goal?",
+      "Can you explain why we're considering a nightly ETL job instead of a more frequent process? What are the benefits and drawbacks of each approach?",
+      "Can you explain the concept of data pre-computation in the context of our analytics dashboard? How will it help improve query performance?"
+    ],
+    "Business Implications": [
+      "How will the proposed ETL process impact our deliverables and project scope? Are there any additional tasks or resources required?"
+    ],
+    "Risks & Dependencies": [
+      "What are some common issues with deduplication that we're trying to address? How will ETL help resolve these issues?",
+      "What are some potential risks or dependencies that we need to consider when implementing an ETL process? How can we mitigate these risks?",
+      "How will we handle data quality issues during the ETL process? Are there any additional steps we need to take to ensure data accuracy?",
+      "10. Are there any potential security risks associated with the proposed ETL process? How can we mitigate these risks?"
+    ]
+  }
+}

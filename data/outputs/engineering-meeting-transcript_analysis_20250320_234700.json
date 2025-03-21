@@ -1,0 +1,31 @@
+{
+  "transcript_file": "data/sample_transcripts/engineering-meeting-transcript.txt",
+  "analysis_timestamp": "20250320_234700",
+  "api_provider": "huggingface",
+  "model": "google/flan-t5-large",
+  "chain_of_thought": true,
+  "identified_topics": [
+    "ETL pipelines",
+    "Deduplication",
+    "Data pipeline design",
+    "Data freshness",
+    "Implementation complexity",
+    "Refactoring",
+    "Some questions to consider",
+    "What are some common challenges with implementing ETL pipelines",
+    "How can we ensure data quality and consistency during the ETL process",
+    "What are some best practices for deduplicating data",
+    "How can we ensure that data is properly versioned and tracked",
+    "What are some common approaches for handling data freshness in a data pipeline",
+    "How can we determine the optimal data retention and deletion policies",
+    "What are some common challenges with implementing streaming solutions",
+    "How can we ensure that data loads and queries are properly optimized"
+  ],
+  "probing_questions": [
+    "How do we determine the optimal data retention and deletion policies for our data pipelines?",
+    "What are some common approaches for handling data freshness in a data pipeline?",
+    "How can we ensure data quality and consistency during the ETL process?",
+    "What are some common challenges with implementing streaming solutions?",
+    "Based on the concerns mentioned, what steps could we take to address data pipeline performance bottlenecks?"
+  ]
+}
