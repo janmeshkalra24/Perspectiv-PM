@@ -391,7 +391,7 @@ def main():
     
     # Determine input type and process accordingly
     input_ext = Path(args.input_path).suffix.lower()
-    if input_ext in ['.m4a', '.mp4']:
+    if input_ext in ['.m4a', '.mp4', '.mp3']:
         print("Detected audio/video input. Transcribing...")
         from src.transcribe import transcribe_audio
         transcript_text = transcribe_audio(args.input_path, args.whisper_model)
