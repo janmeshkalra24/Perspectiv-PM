@@ -1,0 +1,96 @@
+{
+    "tech_repos": [
+        "facebook/react",
+        "tensorflow/tensorflow",
+        "kubernetes/kubernetes",
+        "django/django",
+        "pallets/flask",
+        "microsoft/TypeScript",
+        "golang/go"
+    ],
+    "tech_blogs": [
+        "https://engineering.fb.com",
+        "https://netflixtechblog.com",
+        "https://engineering.linkedin.com/blog",
+        "https://blog.google/technology",
+        "https://aws.amazon.com/blogs/aws",
+        "https://azure.microsoft.com/en-us/blog",
+        "https://cloud.google.com/blog"
+    ],
+    "stack_tags": [
+        "python",
+        "javascript",
+        "docker",
+        "kubernetes",
+        "react",
+        "machine-learning",
+        "aws",
+        "azure",
+        "google-cloud",
+        "microservices",
+        "system-design"
+    ],
+    "pm_blogs": [
+        "https://www.mindtheproduct.com",
+        "https://www.productschool.com/blog",
+        "https://www.productplan.com/blog",
+        "https://www.romanpichler.com/blog",
+        "https://www.svpg.com/articles",
+        "https://www.producttalk.org",
+        "https://www.departmentofproduct.com/blog"
+    ],
+    "pm_faqs": [
+        "https://www.productschool.com/blog/product-management-2/product-manager-faq",
+        "https://www.atlassian.com/agile/product-management/product-manager",
+        "https://www.productplan.com/learn/product-manager-interview-questions",
+        "https://www.aha.io/roadmapping/guide/product-management",
+        "https://www.productmanagerhq.com/resources"
+    ],
+    "jira_projects": [
+        "PROJ",
+        "ENG",
+        "INFRA",
+        "PLAT",
+        "MOBILE",
+        "WEB",
+        "API"
+    ],
+    "task_repos": [
+        "organization/frontend",
+        "organization/backend",
+        "organization/infrastructure",
+        "organization/mobile",
+        "organization/api",
+        "organization/devops",
+        "organization/docs"
+    ],
+    "slack_channels": {
+        "engineering": "C1234567890",
+        "product": "C0987654321",
+        "standup": "C2468013579",
+        "planning": "C1357924680"
+    },
+    "scraping_options": {
+        "days_back": 30,
+        "min_score": 10,
+        "max_questions": 50,
+        "max_posts": 10
+    },
+    "domains": {
+        "tech_decoding": {
+            "description": "Technical documentation and engineering knowledge",
+            "sources": ["github", "stack_overflow", "tech_blogs"],
+            "update_frequency": "daily"
+        },
+        "pm_faqs": {
+            "description": "Product management knowledge and best practices",
+            "sources": ["pm_blogs", "reddit", "faqs"],
+            "update_frequency": "weekly"
+        },
+        "tasks": {
+            "description": "Project tasks, blockers, and dependencies",
+            "sources": ["jira", "github", "slack"],
+            "update_frequency": "hourly"
+        }
+    }
+} 
