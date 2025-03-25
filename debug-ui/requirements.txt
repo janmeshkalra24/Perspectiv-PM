@@ -1,0 +1,5 @@
+fastapi==0.68.1
+uvicorn==0.15.0
+redis==4.5.1
+python-multipart==0.0.5
+aiofiles==0.8.0 

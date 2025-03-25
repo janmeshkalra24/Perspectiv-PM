@@ -19,12 +19,28 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Virtual Environment
-venv/
-ENV/
-env/
+MANIFEST
 .env
+
+# Node.js / React
+node_modules/
+debug-ui/node_modules/
+debug-ui/build/
+debug-ui/.env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp/
+.pnp.js
+
+# Project specific
+data/
+*.json
+!package.json
+!package-lock.json
+*.log
+frame_context.json
+frame_context.json.tmp
 
 # IDE
 .idea/
@@ -32,23 +48,30 @@ env/
 *.swp
 *.swo
 .DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# Project specific
-data/
-*.json
-!.env.example
-*.log
-*.mov
-*.mp4
-*.avi
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+.env/
 
-# Redis
-dump.rdb
-*.rdb
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
 
 # Distribution / packaging
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -64,30 +87,12 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+MANIFEST
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pyenv
-.python-version
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/ 
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json

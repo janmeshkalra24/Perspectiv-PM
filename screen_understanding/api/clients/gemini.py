@@ -70,12 +70,15 @@ class GeminiClient(BaseAPIClient):
                 current_time = time.time()
                 time_since_last = current_time - self.last_request_time
                 if time_since_last < self.request_delay:
+                    logger.info(f"Rate limiting: waiting {self.request_delay - time_since_last:.2f}s before next request")
                     await asyncio.sleep(self.request_delay - time_since_last)
                 self.last_request_time = time.time()
             
+            logger.info(f"Converting image ({len(image_data)} bytes) to base64...")
             # Convert image to base64
             image_b64 = base64.b64encode(image_data).decode('utf-8')
             
+            logger.info("Sending request to Gemini Vision API...")
             # Process with Gemini
             response = await self.model.generate_content_async(
                 [
@@ -86,17 +89,21 @@ class GeminiClient(BaseAPIClient):
                 stream=False
             )
             
+            logger.info("Received response from Gemini Vision API")
+            
             # Extract and return the response
             if response and response.text:
+                logger.info(f"Gemini response text length: {len(response.text)} chars")
                 return {
                     "description": response.text,
                     "confidence": 1.0  # Gemini doesn't provide confidence scores
                 }
             else:
+                logger.warning("Empty response from Gemini")
                 raise ValueError("Empty response from Gemini")
                 
         except Exception as e:
-            logger.error(f"Error processing image with Gemini: {str(e)}")
+            logger.error(f"Error processing image with Gemini: {str(e)}", exc_info=True)
             raise
 
     async def answer_question(

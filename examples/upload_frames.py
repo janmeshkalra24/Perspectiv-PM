@@ -36,22 +36,31 @@ class VideoUploader:
         fps = cap.get(cv2.CAP_PROP_FPS)
         duration = total_frames / fps
         frame_index = 0
-        last_frame_time = 0
+        
+        # Calculate expected number of frames based on interval
+        expected_frames = int(duration / frame_interval)
         
         print(f"\nVideo info:")
         print(f"- Duration: {duration:.1f}s")
         print(f"- FPS: {fps}")
-        print(f"- Total frames: {total_frames}")
+        print(f"- Total frames in video: {total_frames}")
         print(f"- Frame interval: {frame_interval}s")
+        print(f"- Expected frames to upload: {expected_frames}")
         
-        with tqdm(total=int(duration), desc="Uploading frames") as pbar:
+        with tqdm(total=expected_frames, desc="Uploading frames") as pbar:
             try:
-                while cap.isOpened():
-                    current_time = time.time()
-                    if current_time - last_frame_time < frame_interval:
-                        await asyncio.sleep(0.1)
-                        continue
-                    
+                # Calculate frame positions to capture
+                frame_positions = []
+                current_time = 0
+                while current_time < duration:
+                    frame_pos = int(current_time * fps)
+                    frame_positions.append(frame_pos)
+                    current_time += frame_interval
+                
+                # Capture and upload frames at calculated positions
+                for frame_pos in frame_positions:
+                    # Seek to desired frame position
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
                     ret, frame = cap.read()
                     if not ret:
                         break
@@ -63,23 +72,23 @@ class VideoUploader:
                     # Store frame and metadata
                     frame_key = f"{self.prefix}{frame_index}"
                     meta_key = f"{frame_key}:meta"
-                    current_second = cap.get(cv2.CAP_PROP_POS_FRAMES) / fps
+                    current_second = frame_pos / fps
                     
                     metadata = {
                         "timestamp": current_second,
                         "frame_number": frame_index,
-                        "total_frames": total_frames,
-                        "duration": duration
+                        "total_frames": expected_frames,
+                        "duration": duration,
+                        "fps": fps
                     }
                     
                     self.redis.set(frame_key, frame_bytes)
                     self.redis.set(meta_key, str(metadata))
                     
                     # Update progress
-                    last_frame_time = current_time
                     frame_index += 1
-                    pbar.update(frame_interval)
-                    pbar.set_description(f"Time: {current_second:.1f}s / {duration:.1f}s")
+                    pbar.update(1)
+                    pbar.set_description(f"Frame {frame_index}/{expected_frames}")
                     
                     # Print frame info periodically
                     if frame_index % 10 == 0:

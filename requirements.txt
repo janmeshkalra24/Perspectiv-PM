@@ -1,14 +1,25 @@
-httpx>=0.24.0
+# Core dependencies
+fastapi==0.109.0
+uvicorn==0.27.0
+redis==5.0.1
+python-dotenv==1.0.1
+google-generativeai==0.3.2
+httpx==0.26.0
+tqdm==4.66.1
+
+# Image processing
+opencv-python==4.9.0.80
+
+# Development
+black==24.1.1
+pylint==3.0.3
+pytest==8.0.0
+
+# Additional dependencies
 pydantic>=2.0.0
-python-dotenv>=1.0.0
-opencv-python>=4.8.0
 numpy>=1.21.0
-redis>=5.0.0  # For frame buffer management
 tenacity>=8.0.0  # For retry logic
-pytest>=7.0.0
-black>=23.0.0
 isort>=5.12.0
 mypy>=1.0.0
 rich>=13.0.0  # For interactive UI
-pyautogui>=0.9.54  # For screen recording
-google-generativeai>=0.3.0  # For Gemini API 
+pyautogui>=0.9.54  # For screen recording 
