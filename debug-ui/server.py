@@ -119,8 +119,41 @@ async def get_context() -> Dict:
                 }
             }
 
+        # Check if file exists but is empty
+        if context_path.stat().st_size == 0:
+            logger.warning("Context file is empty")
+            return {
+                "context": [],
+                "timestamps": [],
+                "buffer_stats": {
+                    "total_frames_processed": 0,
+                    "frames_in_buffer": 0,
+                    "last_clear_time": time.time(),
+                    "token_usage": 0,
+                    "frame_interval": None,
+                    "buffer_health": 1.0,
+                    "next_clear_time": None
+                }
+            }
+
         with open(context_path, 'r') as f:
-            context = json.load(f)
+            try:
+                context = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Invalid JSON in context file: {e}")
+                return {
+                    "context": [],
+                    "timestamps": [],
+                    "buffer_stats": {
+                        "total_frames_processed": 0,
+                        "frames_in_buffer": 0,
+                        "last_clear_time": time.time(),
+                        "token_usage": 0,
+                        "frame_interval": None,
+                        "buffer_health": 1.0,
+                        "next_clear_time": None
+                    }
+                }
             
         # Add additional metadata for UI
         if "context" in context:
