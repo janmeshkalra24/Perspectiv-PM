@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Container, Typography, Grid, Paper, CircularProgress, LinearProgress, Divider } from '@mui/material';
+import { Box, Container, Typography, Grid, Paper, CircularProgress, LinearProgress, Divider, Button, TextField } from '@mui/material';
 import { List, AutoSizer } from 'react-virtualized';
 import axios from 'axios';
 import { Timeline, TimelineItem, TimelineSeparator, TimelineConnector, TimelineContent, TimelineDot } from '@mui/lab';
@@ -8,16 +8,25 @@ import ReactMarkdown from 'react-markdown';
 const API_BASE_URL = 'http://localhost:8000';
 
 function BufferHealthIndicator({ health, maxFrames, currentFrames }) {
-  const color = health > 0.7 ? 'success' : health > 0.3 ? 'warning' : 'error';
+  // Calculate color based on health (processed frames ratio)
+  // Red: < 33% processed, Yellow: 33-66% processed, Green: > 66% processed
+  const color = health < 0.33 ? 'error' : health < 0.66 ? 'warning' : 'success';
+  
+  // Calculate processed frames
+  const processedFrames = maxFrames - currentFrames;
+  
   return (
     <Box sx={{ width: '100%', mb: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="subtitle2">Buffer Health</Typography>
+        <Typography variant="subtitle2">Processing Progress</Typography>
         <Typography variant="caption" color="textSecondary">
-          {currentFrames} / {maxFrames} frames
+          {processedFrames} / {maxFrames} frames processed ({(health * 100).toFixed(1)}%)
         </Typography>
       </Box>
       <LinearProgress variant="determinate" value={health * 100} color={color} />
+      <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5 }}>
+        {currentFrames} frames waiting in buffer
+      </Typography>
     </Box>
   );
 }
@@ -133,9 +142,331 @@ function BufferStats({ stats }) {
           </Typography>
         </Grid>
         <Grid item xs={6}>
-          <Typography variant="subtitle2">Token Usage</Typography>
-          <Typography>{stats.token_usage}</Typography>
+          <Typography variant="subtitle2">Processing Rate</Typography>
+          <Typography>
+            {stats.total_frames_processed > 0 && stats.frame_interval
+              ? `${(stats.total_frames_processed / (stats.frame_interval * stats.total_frames_processed)).toFixed(1)} fps`
+              : 'N/A'}
+          </Typography>
         </Grid>
+        <Grid item xs={12}>
+          <Typography variant="subtitle2">Token Usage</Typography>
+          <Typography>{stats.token_usage} tokens</Typography>
+        </Grid>
+      </Grid>
+    </Paper>
+  );
+}
+
+function VideoUploadControls({ 
+  onDataCleared 
+}) {
+  const [file, setFile] = useState(null);
+  const [frameInterval, setFrameInterval] = useState(1.0);
+  const [delayInterval, setDelayInterval] = useState(0.0);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [status, setStatus] = useState('');
+  const [debug, setDebug] = useState('');
+  const [processLogs, setProcessLogs] = useState({ upload: [], process: [] });
+
+  const ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
+
+  useEffect(() => {
+    let interval;
+    if (isProcessing) {
+      // Poll for logs every second when processing
+      interval = setInterval(async () => {
+        try {
+          const response = await axios.get(`${API_BASE_URL}/process_logs`);
+          setProcessLogs(prevLogs => ({
+            upload: [...prevLogs.upload, ...response.data.upload],
+            process: [...prevLogs.process, ...response.data.process]
+          }));
+        } catch (error) {
+          console.error('Error fetching logs:', error);
+        }
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isProcessing]);
+
+  const handleFileChange = (event) => {
+    const selectedFile = event.target.files[0];
+    if (selectedFile && ACCEPTED_VIDEO_TYPES.includes(selectedFile.type)) {
+      setFile(selectedFile);
+      setStatus('');
+      setDebug(`Selected file: ${selectedFile.name} (${selectedFile.type}, ${selectedFile.size} bytes)`);
+    } else {
+      setFile(null);
+      setStatus('Please select an MP4 or MOV video file');
+      setDebug('Invalid file type selected');
+    }
+  };
+
+  const handleUploadAndProcess = async () => {
+    try {
+      if (!file) {
+        setStatus('Please select a video file first');
+        return;
+      }
+
+      // Clear previous logs
+      setProcessLogs({ upload: [], process: [] });
+      setStatus('Uploading video...');
+      setDebug('Creating form data for upload...');
+      
+      // Create form data
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('frame_interval', frameInterval.toString());
+      formData.append('delay_interval', delayInterval.toString());
+      
+      setDebug('Sending upload request...');
+      // Upload video
+      const uploadResponse = await axios.post(`${API_BASE_URL}/upload`, formData);
+      
+      setDebug(`Upload response: ${JSON.stringify(uploadResponse.data)}`);
+      
+      if (uploadResponse.data.status === 'success') {
+        setStatus('Starting processing...');
+        setDebug('Sending start processing request...');
+        
+        // Start processing with URL-encoded form data
+        const params = new URLSearchParams();
+        params.append('file_path', uploadResponse.data.file_path);
+        params.append('frame_interval', frameInterval.toString());
+        params.append('delay_interval', delayInterval.toString());
+        params.append('redis_prefix', 'test:');
+        
+        const processResponse = await axios.post(`${API_BASE_URL}/start_processing`, params, {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        });
+        
+        setDebug(`Process response: ${JSON.stringify(processResponse.data)}`);
+        
+        if (processResponse.data.status === 'success') {
+          setStatus('Processing started successfully');
+          setIsProcessing(true);
+        }
+      }
+    } catch (error) {
+      console.error('Upload/Process error:', error);
+      setDebug(`Error details: ${JSON.stringify({
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        headers: error.response?.headers
+      }, null, 2)}`);
+      setStatus(`Error: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  const handleStopProcessing = async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/stop_processing`);
+      if (response.data.status === 'success') {
+        setStatus('Processing stopped');
+        setIsProcessing(false);
+      }
+    } catch (error) {
+      setStatus(`Error stopping processing: ${error.message}`);
+    }
+  };
+
+  const handleClearData = async () => {
+    try {
+      setIsClearing(true);
+      setStatus('Clearing all data...');
+      
+      const response = await axios.post(`${API_BASE_URL}/clear_data`);
+      
+      if (response.data.status === 'success') {
+        // Reset component state
+        setFile(null);
+        setProcessLogs({ upload: [], process: [] });
+        setIsProcessing(false);
+        setDebug('');
+        
+        // Notify parent component to clear its state
+        if (onDataCleared) {
+          onDataCleared();
+        }
+        
+        setStatus('All data cleared successfully');
+      }
+    } catch (error) {
+      setStatus(`Error clearing data: ${error.message}`);
+      console.error('Clear data error:', error);
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  return (
+    <Paper sx={{ p: 2, mb: 3 }}>
+      <Typography variant="h6" gutterBottom>
+        Video Upload & Processing Controls
+      </Typography>
+      <Grid container spacing={2}>
+        <Grid item xs={12}>
+          <input
+            accept="video/mp4,video/quicktime"
+            style={{ display: 'none' }}
+            id="video-upload"
+            type="file"
+            onChange={handleFileChange}
+            onClick={(e) => e.target.value = null}
+          />
+          <label htmlFor="video-upload">
+            <Button 
+              variant="contained" 
+              component="span" 
+              fullWidth
+              sx={{ mb: 1 }}
+            >
+              {file ? file.name : 'Select Video (MP4/MOV)'}
+            </Button>
+          </label>
+          {file && (
+            <Typography variant="caption" color="textSecondary">
+              File size: {(file.size / (1024 * 1024)).toFixed(2)} MB | Type: {file.type === 'video/quicktime' ? 'MOV' : 'MP4'}
+            </Typography>
+          )}
+        </Grid>
+        <Grid item xs={6}>
+          <TextField
+            fullWidth
+            label="Frame Interval (seconds)"
+            type="number"
+            value={frameInterval}
+            onChange={(e) => setFrameInterval(parseFloat(e.target.value))}
+            inputProps={{ step: 0.1, min: 0.1 }}
+          />
+        </Grid>
+        <Grid item xs={6}>
+          <TextField
+            fullWidth
+            label="Delay Interval (seconds)"
+            type="number"
+            value={delayInterval}
+            onChange={(e) => setDelayInterval(parseFloat(e.target.value))}
+            inputProps={{ step: 0.1, min: 0 }}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          {!isProcessing ? (
+            <Grid container spacing={2}>
+              <Grid item xs={8}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  fullWidth
+                  onClick={handleUploadAndProcess}
+                  disabled={!file || isClearing}
+                >
+                  Upload & Start Processing
+                </Button>
+              </Grid>
+              <Grid item xs={4}>
+                <Button
+                  variant="contained"
+                  color="error"
+                  fullWidth
+                  onClick={handleClearData}
+                  disabled={isClearing}
+                >
+                  Clear All Data
+                </Button>
+              </Grid>
+            </Grid>
+          ) : (
+            <Button
+              variant="contained"
+              color="error"
+              fullWidth
+              onClick={handleStopProcessing}
+            >
+              Stop Processing
+            </Button>
+          )}
+        </Grid>
+        {status && (
+          <Grid item xs={12}>
+            <Typography color={status.includes('Error') ? 'error' : 'textSecondary'}>
+              {status}
+            </Typography>
+          </Grid>
+        )}
+        
+        {debug && (
+          <Grid item xs={12}>
+            <Typography variant="subtitle2" gutterBottom>Debug Info:</Typography>
+            <Paper sx={{ p: 1, bgcolor: 'grey.900', maxHeight: 200, overflow: 'auto' }}>
+              <Typography
+                variant="caption"
+                component="pre"
+                sx={{ 
+                  m: 0,
+                  color: 'grey.300',
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all'
+                }}
+              >
+                {debug}
+              </Typography>
+            </Paper>
+          </Grid>
+        )}
+
+        {isProcessing && (
+          <Grid item xs={12}>
+            <Typography variant="subtitle2" gutterBottom>Process Logs:</Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={6}>
+                <Typography variant="caption">Upload Process:</Typography>
+                <Paper sx={{ p: 1, bgcolor: 'grey.900', height: 200, overflow: 'auto' }}>
+                  <Typography
+                    variant="caption"
+                    component="pre"
+                    sx={{ 
+                      m: 0,
+                      color: 'grey.300',
+                      fontFamily: 'monospace',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all'
+                    }}
+                  >
+                    {processLogs.upload.join('\n')}
+                  </Typography>
+                </Paper>
+              </Grid>
+              <Grid item xs={6}>
+                <Typography variant="caption">Processing:</Typography>
+                <Paper sx={{ p: 1, bgcolor: 'grey.900', height: 200, overflow: 'auto' }}>
+                  <Typography
+                    variant="caption"
+                    component="pre"
+                    sx={{ 
+                      m: 0,
+                      color: 'grey.300',
+                      fontFamily: 'monospace',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all'
+                    }}
+                  >
+                    {processLogs.process.join('\n')}
+                  </Typography>
+                </Paper>
+              </Grid>
+            </Grid>
+          </Grid>
+        )}
       </Grid>
     </Paper>
   );
@@ -254,6 +585,17 @@ function App() {
     );
   };
 
+  const handleDataCleared = () => {
+    setFrames([]);
+    setTotalFrames(0);
+    setContext(null);
+    setError(null);
+    setContextError(null);
+    // Force immediate refresh of data
+    fetchFrames();
+    fetchContext();
+  };
+
   if (loading) {
     return (
       <Box 
@@ -283,6 +625,10 @@ function App() {
         <Typography variant="h4" component="h1" gutterBottom>
           Perspectiv Screen Understanding Demo
         </Typography>
+        
+        <VideoUploadControls 
+          onDataCleared={handleDataCleared}
+        />
         
         {loading ? (
           <CircularProgress />

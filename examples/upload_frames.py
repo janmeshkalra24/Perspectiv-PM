@@ -9,16 +9,27 @@ from tqdm import tqdm
 import time
 
 class VideoUploader:
-    def __init__(self, redis_prefix: str = "demo:"):
+    def __init__(self, redis_prefix: str = "demo:", delay_interval: float = 0.0):
         self.redis = redis.Redis(host="localhost", port=6379, db=0)
         self.prefix = redis_prefix
+        self.delay_interval = delay_interval
+        # Always clean up on initialization
+        self.cleanup_old_frames()
         
     def cleanup_old_frames(self):
-        """Clean up any existing frames."""
-        keys = self.redis.keys(f"{self.prefix}*")
-        if keys:
-            self.redis.delete(*keys)
-            print(f"Cleaned up {len(keys)} old frame keys")
+        """Clean up any existing frames and their metadata."""
+        # Get all keys matching the prefix pattern
+        frame_keys = self.redis.keys(f"{self.prefix}*")
+        meta_keys = self.redis.keys(f"{self.prefix}*:meta")
+        
+        # Combine all keys to delete
+        all_keys = frame_keys + meta_keys
+        
+        if all_keys:
+            self.redis.delete(*all_keys)
+            print(f"Cleaned up {len(frame_keys)} frame keys and {len(meta_keys)} metadata keys")
+        else:
+            print("No existing frames to clean up")
     
     async def upload_video(self, video_path: str, frame_interval: float = 1.0):
         """Upload video frames to Redis.
@@ -26,6 +37,7 @@ class VideoUploader:
         Args:
             video_path: Path to video file
             frame_interval: Interval between frames in seconds
+            delay_interval: Delay between frame uploads in seconds
         """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -94,6 +106,10 @@ class VideoUploader:
                     if frame_index % 10 == 0:
                         print(f"\nUploaded frame {frame_index} at {current_second:.1f}s")
                         print(f"Active frame keys: {len(self.redis.keys(f'{self.prefix}*'))//2}")
+                    
+                    # Add delay between frames if specified
+                    if self.delay_interval > 0:
+                        await asyncio.sleep(self.delay_interval)
                         
             except KeyboardInterrupt:
                 print("\nUpload interrupted by user")
@@ -118,6 +134,12 @@ async def main():
         help="Interval between frames in seconds"
     )
     parser.add_argument(
+        "--delay-interval",
+        type=float,
+        default=0.0,
+        help="Delay between frame uploads in seconds"
+    )
+    parser.add_argument(
         "--redis-prefix",
         type=str,
         default="demo:",
@@ -137,7 +159,7 @@ async def main():
         print(f"Error: Video file not found: {video_path}")
         return
         
-    uploader = VideoUploader(redis_prefix=args.redis_prefix)
+    uploader = VideoUploader(redis_prefix=args.redis_prefix, delay_interval=args.delay_interval)
     
     if args.clean:
         uploader.cleanup_old_frames()
