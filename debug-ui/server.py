@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, FileResponse
 import redis
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import ast
 import time
 import logging
@@ -14,8 +14,23 @@ import sys
 import signal
 import threading
 import queue
+import google.generativeai as genai
+from pydantic import BaseModel
+from dotenv import load_dotenv
 
 app = FastAPI()
+
+# Load environment variables
+load_dotenv()
+
+# Configure Gemini
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+if not GOOGLE_API_KEY:
+    logger.warning("GOOGLE_API_KEY not found in environment variables")
+
+# Configure Gemini with the same settings as test_context_processing.py
+genai.configure(api_key=GOOGLE_API_KEY)
+model = genai.GenerativeModel('gemini-2.0-flash-lite')
 
 # Configure CORS
 app.add_middleware(
@@ -439,4 +454,106 @@ async def clear_data():
         return {"status": "success", "message": "All data cleared"}
     except Exception as e:
         logger.error(f"Error clearing data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ChatRequest(BaseModel):
+    history: List[Dict[str, Any]]
+    currentFrame: Optional[Dict[str, Any]]
+    messages: List[Dict[str, str]]
+
+@app.post("/chat")
+async def chat(request: ChatRequest):
+    """Handle chat requests with context awareness."""
+    try:
+        if not GOOGLE_API_KEY:
+            raise HTTPException(
+                status_code=500,
+                detail="Google API key not configured. Please set GOOGLE_API_KEY environment variable."
+            )
+
+        # Prepare context for the model
+        context_text = "Screen Recording Context:\n"
+        
+        # Add historical context
+        if request.history:
+            context_text += "\nPrevious frames:\n"
+            for frame in request.history[-5:]:  # Last 5 frames for context
+                timestamp = frame.get("metadata", {}).get("timestamp", 0)
+                description = frame.get("description", "No description available")
+                context_text += f"[{timestamp:.1f}s] {description}\n"
+        
+        # Add current frame context
+        if request.currentFrame:
+            context_text += "\nCurrent frame:\n"
+            timestamp = request.currentFrame.get("metadata", {}).get("timestamp", 0)
+            description = request.currentFrame.get("description", "No description available")
+            context_text += f"[{timestamp:.1f}s] {description}\n"
+        
+        # Add chat history
+        chat_history = "\nChat history:\n"
+        for msg in request.messages[:-1]:  # Exclude the latest message
+            role = "User" if msg["role"] == "user" else "Assistant"
+            chat_history += f"{role}: {msg['content']}\n"
+        
+        # Current user question
+        current_question = request.messages[-1]["content"]
+        
+        # Prepare the prompt
+        prompt = f"""You are an AI assistant helping to understand a screen recording.
+Based on the context below, answer the user's question about what's happening in the recording.
+Be specific and reference timestamps when relevant.
+
+Format your response using markdown:
+- Use **bold** for emphasis
+- Use timestamps in `code` format
+- Use bullet points for lists
+- Use > for important quotes or highlights
+- Use ### for section headers if needed
+
+{context_text}
+
+{chat_history}
+User's question: {current_question}
+
+Answer:"""
+
+        # Generate response using Gemini with the same configuration as test_context_processing.py
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.3,
+                "top_p": 1,
+                "top_k": 32,
+                "max_output_tokens": 1024,
+            },
+            safety_settings=[
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                }
+            ]
+        )
+        
+        if not response.text:
+            raise HTTPException(
+                status_code=500,
+                detail="Empty response from Gemini API"
+            )
+            
+        return {"response": response.text}
+        
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) 

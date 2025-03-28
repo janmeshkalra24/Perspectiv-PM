@@ -1,9 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Container, Typography, Grid, Paper, CircularProgress, LinearProgress, Divider, Button, TextField } from '@mui/material';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Container, Typography, Grid, Paper, CircularProgress, LinearProgress, Divider, Button, TextField, IconButton, Tooltip } from '@mui/material';
 import { List, AutoSizer } from 'react-virtualized';
 import axios from 'axios';
 import { Timeline, TimelineItem, TimelineSeparator, TimelineConnector, TimelineContent, TimelineDot } from '@mui/lab';
 import ReactMarkdown from 'react-markdown';
+import SendIcon from '@mui/icons-material/Send';
+import MicIcon from '@mui/icons-material/Mic';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
+import StopIcon from '@mui/icons-material/Stop';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -472,6 +476,260 @@ function VideoUploadControls({
   );
 }
 
+function ChatMessage({ message, isUser }) {
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  
+  const handleSpeak = () => {
+    if ('speechSynthesis' in window) {
+      if (isSpeaking) {
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
+      } else {
+        const utterance = new SpeechSynthesisUtterance(message.content);
+        utterance.onend = () => setIsSpeaking(false);
+        window.speechSynthesis.speak(utterance);
+        setIsSpeaking(true);
+      }
+    }
+  };
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        justifyContent: isUser ? 'flex-end' : 'flex-start',
+        mb: 2,
+      }}
+    >
+      <Paper
+        sx={{
+          p: 2,
+          maxWidth: '70%',
+          bgcolor: isUser ? 'primary.main' : 'background.paper',
+          color: isUser ? 'primary.contrastText' : 'text.primary',
+          borderRadius: 2,
+        }}
+      >
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+          <Typography variant="caption" sx={{ opacity: 0.7 }}>
+            {isUser ? 'You' : 'Assistant'}
+          </Typography>
+          {!isUser && (
+            <Tooltip title={isSpeaking ? "Stop speaking" : "Speak response"}>
+              <IconButton size="small" onClick={handleSpeak} color={isSpeaking ? "error" : "default"}>
+                {isSpeaking ? <StopIcon /> : <VolumeUpIcon />}
+              </IconButton>
+            </Tooltip>
+          )}
+        </Box>
+        {isUser ? (
+          <Typography>{message.content}</Typography>
+        ) : (
+          <ReactMarkdown>{message.content}</ReactMarkdown>
+        )}
+      </Paper>
+    </Box>
+  );
+}
+
+function ChatInterface({ context, currentFrame }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [sttError, setSTTError] = useState(null);
+  const chatContainerRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    // Initialize speech recognition with broader browser support
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = true;
+      recognitionRef.current.lang = 'en-US';
+      
+      recognitionRef.current.onstart = () => {
+        setIsRecording(true);
+        setSTTError(null);
+      };
+      
+      recognitionRef.current.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map(result => result[0].transcript)
+          .join('');
+        setInput(transcript);
+      };
+      
+      recognitionRef.current.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsRecording(false);
+        switch (event.error) {
+          case 'not-allowed':
+            setSTTError('Microphone access denied. Please allow microphone access in your browser settings.');
+            break;
+          case 'no-speech':
+            setSTTError('No speech detected. Please try speaking again.');
+            break;
+          case 'network':
+            setSTTError('Network error occurred. Please check your connection.');
+            break;
+          default:
+            setSTTError(`Error: ${event.error}`);
+        }
+      };
+      
+      recognitionRef.current.onend = () => {
+        setIsRecording(false);
+      };
+    }
+    
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (!input.trim()) return;
+
+    const userMessage = { role: 'user', content: input };
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      const contextData = {
+        history: context?.context || [],
+        currentFrame: currentFrame,
+        messages: [...messages, userMessage]
+      };
+
+      const response = await axios.post(`${API_BASE_URL}/chat`, contextData);
+      
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: response.data.response
+      }]);
+    } catch (error) {
+      console.error('Chat error:', error);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: 'Sorry, I encountered an error processing your request.'
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const toggleRecording = () => {
+    if (!recognitionRef.current) {
+      setSTTError('Speech recognition is not supported in your browser. Please try using Chrome, Edge, or Safari.');
+      return;
+    }
+
+    if (isRecording) {
+      recognitionRef.current.stop();
+    } else {
+      setSTTError(null);
+      try {
+        recognitionRef.current.start();
+      } catch (error) {
+        console.error('Speech recognition start error:', error);
+        setSTTError('Error starting speech recognition. Please try again.');
+      }
+    }
+  };
+
+  return (
+    <Paper sx={{ p: 2, mt: 3 }}>
+      <Typography variant="h6" gutterBottom>
+        Chat Interface
+      </Typography>
+      <Box
+        ref={chatContainerRef}
+        sx={{
+          height: '300px',
+          overflowY: 'auto',
+          mb: 2,
+          p: 2,
+          bgcolor: 'background.default',
+          borderRadius: 1
+        }}
+      >
+        {messages.map((message, index) => (
+          <ChatMessage
+            key={index}
+            message={message}
+            isUser={message.role === 'user'}
+          />
+        ))}
+        {isLoading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+            <CircularProgress size={24} />
+          </Box>
+        )}
+      </Box>
+      <Grid container spacing={1} alignItems="center">
+        <Grid item xs>
+          <TextField
+            fullWidth
+            variant="outlined"
+            placeholder="Ask about what's happening in the screen recording..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            disabled={isLoading || isRecording}
+            error={!!sttError}
+            helperText={sttError}
+          />
+        </Grid>
+        <Grid item>
+          <Tooltip title={isRecording ? "Stop recording" : "Start voice input"}>
+            <IconButton
+              color={isRecording ? "error" : "primary"}
+              onClick={toggleRecording}
+              disabled={isLoading}
+              sx={{
+                animation: isRecording ? 'pulse 1.5s ease-in-out infinite' : 'none',
+                '@keyframes pulse': {
+                  '0%': { opacity: 1 },
+                  '50%': { opacity: 0.5 },
+                  '100%': { opacity: 1 },
+                },
+              }}
+            >
+              {isRecording ? <StopIcon /> : <MicIcon />}
+            </IconButton>
+          </Tooltip>
+        </Grid>
+        <Grid item>
+          <IconButton
+            color="primary"
+            onClick={handleSendMessage}
+            disabled={isLoading || !input.trim()}
+          >
+            <SendIcon />
+          </IconButton>
+        </Grid>
+      </Grid>
+    </Paper>
+  );
+}
+
 function App() {
   const [frames, setFrames] = useState([]);
   const [totalFrames, setTotalFrames] = useState(0);
@@ -479,6 +737,7 @@ function App() {
   const [context, setContext] = useState(null);
   const [error, setError] = useState(null);
   const [contextError, setContextError] = useState(null);
+  const [currentFrame, setCurrentFrame] = useState(null);
 
   useEffect(() => {
     fetchFrames();
@@ -492,6 +751,13 @@ function App() {
     
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (context?.context?.length > 0) {
+      const lastFrame = context.context[context.context.length - 1];
+      setCurrentFrame(lastFrame);
+    }
+  }, [context]);
 
   const fetchFrames = async () => {
     try {
@@ -635,31 +901,38 @@ function App() {
         ) : error ? (
           <Typography color="error">{error}</Typography>
         ) : (
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={4}>
-              <Paper sx={{ p: 2, height: '100%' }}>
-                <Typography variant="h6">Frame Information</Typography>
-                <Typography>Total Frames: {totalFrames}</Typography>
-                {context?.buffer_stats && (
-                  <>
-                    <BufferHealthIndicator health={context.buffer_stats.buffer_health} maxFrames={totalFrames} currentFrames={context.buffer_stats.frames_in_buffer} />
-                    <BufferStats stats={context.buffer_stats} />
-                  </>
-                )}
-              </Paper>
+          <>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={4}>
+                <Paper sx={{ p: 2, height: '100%' }}>
+                  <Typography variant="h6">Frame Information</Typography>
+                  <Typography>Total Frames: {totalFrames}</Typography>
+                  {context?.buffer_stats && (
+                    <>
+                      <BufferHealthIndicator health={context.buffer_stats.buffer_health} maxFrames={totalFrames} currentFrames={context.buffer_stats.frames_in_buffer} />
+                      <BufferStats stats={context.buffer_stats} />
+                    </>
+                  )}
+                </Paper>
+              </Grid>
+              
+              <Grid item xs={12} md={8}>
+                <Paper sx={{ p: 2, maxHeight: 600, overflow: 'auto' }}>
+                  <Typography variant="h6">Context Timeline</Typography>
+                  {contextError ? (
+                    <Typography color="error">{contextError}</Typography>
+                  ) : (
+                    <ContextTimeline context={context} />
+                  )}
+                </Paper>
+              </Grid>
             </Grid>
             
-            <Grid item xs={12} md={8}>
-              <Paper sx={{ p: 2, maxHeight: 600, overflow: 'auto' }}>
-                <Typography variant="h6">Context Timeline</Typography>
-                {contextError ? (
-                  <Typography color="error">{contextError}</Typography>
-                ) : (
-                  <ContextTimeline context={context} />
-                )}
-              </Paper>
-            </Grid>
-          </Grid>
+            <ChatInterface 
+              context={context}
+              currentFrame={currentFrame}
+            />
+          </>
         )}
       </Box>
     </Container>

@@ -10,6 +10,9 @@ A real-time screen understanding system that processes video frames using Google
 - Redis-based frame buffer for efficient frame management
 - Rate limiting support for API calls
 - Atomic context file operations for data safety
+- Interactive chat interface with Gemini for contextual queries
+- Speech-to-text and text-to-speech capabilities
+- Markdown formatting for AI responses
 
 ## Project Structure
 
@@ -26,9 +29,9 @@ A real-time screen understanding system that processes video frames using Google
 │   └── sources/            # Frame sources
 │       └── frame_buffer.py # Redis-based frame buffer
 ├── debug-ui/               # Debug interface
-│   ├── server.py          # FastAPI server
+│   ├── server.py          # FastAPI server with chat endpoint
 │   └── src/               # React frontend
-│       └── App.js         # Main UI component
+│       └── App.js         # Main UI component with chat interface
 └── examples/              # Example scripts
     ├── upload_frames.py   # Frame upload utility
     ├── cleanup.py        # Cleanup utility
@@ -63,7 +66,7 @@ redis-server
 2. Start the debug UI server:
 ```bash
 cd debug-ui
-python server.py
+python -m uvicorn server:app --reload --port 8000
 ```
 
 3. Start the React development server:
@@ -96,6 +99,21 @@ python examples/test_context_processing.py --redis-prefix test: --context-file d
 - Frame processing statistics
 - Context token usage tracking
 - Frame interval measurements
+- Interactive chat interface with:
+  - Natural language queries about screen content
+  - Voice input support (Chrome/Edge/Safari)
+  - Text-to-speech for AI responses
+  - Markdown-formatted responses
+  - Real-time context awareness
+
+## Browser Compatibility
+
+The debug UI's speech features require:
+- Chrome 33+ (recommended)
+- Edge 79+
+- Safari 14.1+
+- A working microphone for voice input
+- System audio for text-to-speech
 
 ## Development
 
@@ -117,6 +135,7 @@ python examples/test_context_processing.py --redis-prefix test: --context-file d
 - Graceful handling of API rate limits
 - Atomic context file operations to prevent corruption
 - Buffer overflow protection with intelligent pruning
+- Speech recognition error handling with user feedback
 
 ## Contributing
 
