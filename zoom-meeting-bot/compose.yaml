@@ -3,6 +3,7 @@ services:
     build: ./
     volumes:
      - .:/tmp/py-zoom-meeting-sdk
+     - ./sample_program/out:/tmp/py-zoom-meeting-sdk/sample_program/out
     ports:
       - "3000:3000"
     environment:

@@ -33,6 +33,7 @@ def generate_jwt(client_id, client_secret):
         "iat": iat,
         "exp": exp,
         "appKey": client_id,
+        "sdkKey": client_id,
         "tokenExp": int(exp.timestamp())
     }
     
@@ -212,7 +213,7 @@ class MeetingBot:
 
             def on_recording_privilege_changed(can_rec):
                 print("on_recording_privilege_changed called. can_record =", can_rec)
-                if can_rec:
+                if can_rec: 
                     GLib.timeout_add_seconds(1, self.start_raw_recording)
                 else:
                     self.stop_raw_recording()
@@ -284,6 +285,10 @@ class MeetingBot:
             self.audio_raw_data_sender.send(chunk, 32000, zoom.ZoomSDKAudioChannel_Mono)
 
     def on_one_way_audio_raw_data_received_callback(self, data, node_id):
+        # Write audio to file (now supports .mp3 or .wav)
+        output_path = f'sample_program/out/audio_{node_id}.pcm'
+        self.write_to_file(output_path, data)
+
         if os.environ.get('DEEPGRAM_API_KEY') is None:
             volume = normalized_rms_audio(data.GetBuffer())
             if self.audio_print_counter % 20 < 2 and volume > 0.01:
@@ -308,8 +313,9 @@ class MeetingBot:
 
     def write_to_file(self, path, data):
         try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             buffer_bytes = data.GetBuffer()          
-
             with open(path, 'ab') as file:
                 file.write(buffer_bytes)
         except IOError as e:
@@ -407,7 +413,7 @@ class MeetingBot:
     def join_meeting(self):
         mid = os.environ.get('MEETING_ID')
         password = os.environ.get('MEETING_PWD')
-        display_name = "My meeting bot"
+        display_name = "Perspectiv Bot"
 
         meeting_number = int(mid)
 
