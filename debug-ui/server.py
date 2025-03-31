@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, FileResponse
 import redis
@@ -17,6 +17,7 @@ import queue
 import google.generativeai as genai
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from knowledge_graph import ScreenKnowledgeGraph
 
 app = FastAPI()
 
@@ -117,14 +118,40 @@ async def get_frames(prefix: str = "demo:", start: int = 0, limit: int = 30) -> 
 async def get_frame(frame_key: str) -> Response:
     """Get a specific frame's data."""
     try:
-        frame_data = redis_client.get(frame_key)
-        if not frame_data:
-            raise HTTPException(status_code=404, detail="Frame not found")
+        logger.debug(f"Attempting to fetch frame: {frame_key}")
+        
+        # Validate frame key
+        if not frame_key or ':' not in frame_key:
+            logger.warning(f"Invalid frame key format: {frame_key}")
+            raise HTTPException(status_code=400, detail="Invalid frame key format")
             
+        # Decode URL encoded key if needed
+        decoded_key = frame_key
+        
+        # Get frame data
+        frame_data = redis_client.get(decoded_key)
+        if not frame_data:
+            logger.warning(f"Frame not found: {decoded_key}")
+            
+            # Try checking if Redis is connected
+            try:
+                redis_client.ping()
+                logger.info("Redis connection is active")
+            except Exception as redis_err:
+                logger.error(f"Redis connection error: {redis_err}")
+                raise HTTPException(status_code=500, detail=f"Redis connection error: {redis_err}")
+                
+            raise HTTPException(status_code=404, detail=f"Frame not found: {decoded_key}")
+        
+        logger.debug(f"Successfully retrieved frame: {decoded_key}, size: {len(frame_data)} bytes")
         return Response(content=frame_data, media_type="image/jpeg")
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as they're already well-formed
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error fetching frame {frame_key}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching frame: {str(e)}")
 
 def calculate_buffer_stats(context_data):
     """Calculate buffer statistics including health."""
@@ -422,20 +449,37 @@ async def clear_data():
         # Stop any running processes first
         for process_type in running_processes:
             try:
+                logger.info(f"Stopping process: {process_type}")
                 os.killpg(os.getpgid(running_processes[process_type].pid), signal.SIGTERM)
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Error stopping process {process_type}: {e}")
         running_processes.clear()
         
         # Clear Redis data
+        logger.info("Clearing Redis data")
         redis_client.flushall()
         
         # Clear process logs
+        logger.info("Clearing process logs")
         for q in process_logs.values():
             while not q.empty():
                 q.get()
         
+        # Clear Neo4j database (knowledge graph)
+        logger.info("Clearing Neo4j database")
+        try:
+            # Clear all nodes and relationships
+            with knowledge_graph.driver.session() as session:
+                # First remove all relationships
+                session.run("MATCH ()-[r]->() DELETE r")
+                # Then remove all nodes
+                session.run("MATCH (n) DELETE n")
+                logger.info("Neo4j database cleared successfully")
+        except Exception as neo4j_err:
+            logger.error(f"Error clearing Neo4j database: {neo4j_err}")
+        
         # Clear context file
+        logger.info("Clearing context file")
         context_path = find_context_file()
         if context_path:
             # Write empty context to file
@@ -450,6 +494,14 @@ async def clear_data():
             with open(context_path, 'w') as f:
                 json.dump({"context": [], "timestamps": []}, f)
             logger.info(f"Created new empty context file at: {context_path}")
+        
+        # Also reinitialize the knowledge graph schema
+        try:
+            logger.info("Reinitializing knowledge graph schema")
+            # Recreate schema constraints and indexes
+            knowledge_graph._initialize_schema()
+        except Exception as schema_err:
+            logger.error(f"Error reinitializing knowledge graph schema: {schema_err}")
                 
         return {"status": "success", "message": "All data cleared"}
     except Exception as e:
@@ -460,6 +512,9 @@ class ChatRequest(BaseModel):
     history: List[Dict[str, Any]]
     currentFrame: Optional[Dict[str, Any]]
     messages: List[Dict[str, str]]
+
+# Initialize knowledge graph
+knowledge_graph = ScreenKnowledgeGraph('models/gemini-2.0-flash-lite')
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
@@ -472,34 +527,43 @@ async def chat(request: ChatRequest):
             )
 
         # Prepare context for the model
-        context_text = "Screen Recording Context:\n"
-        
-        # Add historical context
-        if request.history:
-            context_text += "\nPrevious frames:\n"
-            for frame in request.history[-5:]:  # Last 5 frames for context
-                timestamp = frame.get("metadata", {}).get("timestamp", 0)
-                description = frame.get("description", "No description available")
-                context_text += f"[{timestamp:.1f}s] {description}\n"
-        
-        # Add current frame context
-        if request.currentFrame:
-            context_text += "\nCurrent frame:\n"
-            timestamp = request.currentFrame.get("metadata", {}).get("timestamp", 0)
-            description = request.currentFrame.get("description", "No description available")
-            context_text += f"[{timestamp:.1f}s] {description}\n"
-        
-        # Add chat history
-        chat_history = "\nChat history:\n"
-        for msg in request.messages[:-1]:  # Exclude the latest message
-            role = "User" if msg["role"] == "user" else "Assistant"
-            chat_history += f"{role}: {msg['content']}\n"
+        context = {
+            "history": request.history,
+            "currentFrame": request.currentFrame,
+            "messages": request.messages[:-1]  # Previous messages
+        }
         
         # Current user question
         current_question = request.messages[-1]["content"]
         
-        # Prepare the prompt
-        prompt = f"""You are an AI assistant helping to understand a screen recording.
+        try:
+            # Try to get answer from knowledge graph first
+            answer = await knowledge_graph.query_knowledge_graph(current_question, context)
+            
+            # If knowledge graph fails or returns a fallback message, use traditional approach
+            if "error" in answer.lower() or "falling back" in answer.lower():
+                # Prepare context text as before
+                context_text = "Screen Recording Context:\n"
+                
+                if request.history:
+                    context_text += "\nPrevious frames:\n"
+                    for frame in request.history[-5:]:
+                        timestamp = frame.get("metadata", {}).get("timestamp", 0)
+                        description = frame.get("description", "No description available")
+                        context_text += f"[{timestamp:.1f}s] {description}\n"
+                
+                if request.currentFrame:
+                    context_text += "\nCurrent frame:\n"
+                    timestamp = request.currentFrame.get("metadata", {}).get("timestamp", 0)
+                    description = request.currentFrame.get("description", "No description available")
+                    context_text += f"[{timestamp:.1f}s] {description}\n"
+                
+                chat_history = "\nChat history:\n"
+                for msg in request.messages[:-1]:
+                    role = "User" if msg["role"] == "user" else "Assistant"
+                    chat_history += f"{role}: {msg['content']}\n"
+                
+                prompt = f"""You are an AI assistant helping to understand a screen recording.
 Based on the context below, answer the user's question about what's happening in the recording.
 Be specific and reference timestamps when relevant.
 
@@ -517,43 +581,388 @@ User's question: {current_question}
 
 Answer:"""
 
-        # Generate response using Gemini with the same configuration as test_context_processing.py
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.3,
-                "top_p": 1,
-                "top_k": 32,
-                "max_output_tokens": 1024,
-            },
-            safety_settings=[
-                {
-                    "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                }
-            ]
-        )
-        
-        if not response.text:
-            raise HTTPException(
-                status_code=500,
-                detail="Empty response from Gemini API"
-            )
+                # Generate response using Gemini with the same configuration
+                response = model.generate_content(
+                    prompt,
+                    generation_config={
+                        "temperature": 0.3,
+                        "top_p": 1,
+                        "top_k": 32,
+                        "max_output_tokens": 1024,
+                    },
+                    safety_settings=[
+                        {
+                            "category": "HARM_CATEGORY_HARASSMENT",
+                            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_HATE_SPEECH",
+                            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                            "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                        }
+                    ]
+                )
+                
+                answer = response.text if response.text else "Sorry, I couldn't answer that question."
             
-        return {"response": response.text}
-        
+            return {"response": answer}
+            
+        except Exception as e:
+            logger.error(f"Error in chat endpoint: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
+            
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/graph_data")
+async def get_graph_data():
+    """Get the current state of the knowledge graph for visualization."""
+    try:
+        # Query nodes with safer property access
+        nodes_query = """
+        MATCH (n)
+        WITH n, labels(n) as labels
+        RETURN COLLECT({
+            id: elementId(n),
+            label: CASE 
+                WHEN n.label IS NOT NULL THEN n.label
+                WHEN n.frame_id IS NOT NULL THEN toString(n.frame_id)
+                WHEN n.element_id IS NOT NULL THEN toString(n.element_id)
+                ELSE toString(elementId(n))
+            END,
+            type: head(labels),
+            timestamp: CASE WHEN n.timestamp IS NOT NULL THEN n.timestamp ELSE 0 END,
+            description: CASE WHEN n.description IS NOT NULL THEN n.description ELSE '' END
+            // Omitting content and category fields that cause warnings
+        }) as nodes
+        """
+        
+        # Query relationships with more details
+        relationships_query = """
+        MATCH (source)-[r]->(target)
+        RETURN COLLECT({
+            source: elementId(source),
+            target: elementId(target),
+            type: type(r),
+            properties: {}  // Using empty object to avoid warnings
+        }) as links
+        """
+        
+        # Execute queries
+        with knowledge_graph.driver.session() as session:
+            nodes_result = session.run(nodes_query).single()
+            links_result = session.run(relationships_query).single()
+            
+            # Filter out null properties and ensure data is present
+            nodes = []
+            if nodes_result and "nodes" in nodes_result:
+                nodes = [
+                    {k: v for k, v in node.items() if v is not None}
+                    for node in nodes_result["nodes"]
+                ]
+            
+            links = []
+            if links_result and "links" in links_result:
+                links = links_result["links"]
+            
+            return {
+                "nodes": nodes,
+                "links": links
+            }
+            
+    except Exception as e:
+        logger.error(f"Error fetching graph data: {e}")
+        # Return empty structure instead of error
+        return {
+            "nodes": [],
+            "links": []
+        }
+
+@app.get("/visualization_graph")
+async def get_visualization_graph():
+    """Get a UI-optimized version of the knowledge graph for visualization."""
+    try:
+        # Query core frame data with safer query that avoids property warnings
+        frame_query = """
+        MATCH (f:Frame)
+        RETURN COLLECT({
+            id: toString(elementId(f)),
+            frame_id: f.frame_id,
+            timestamp: CASE WHEN f.timestamp IS NOT NULL THEN f.timestamp ELSE 0 END,
+            description: CASE WHEN f.description IS NOT NULL THEN f.description ELSE '' END
+        }) as frames
+        """
+        
+        # Query relationships between frames (temporal)
+        frame_rel_query = """
+        MATCH (f1:Frame)-[r]->(f2:Frame)
+        RETURN COLLECT({
+            source: toString(elementId(f1)),
+            target: toString(elementId(f2)),
+            type: type(r)
+        }) as frame_links
+        """
+        
+        with knowledge_graph.driver.session() as session:
+            # Get frames
+            frames_result = session.run(frame_query).single()
+            frame_links_result = session.run(frame_rel_query).single()
+            
+            frames = frames_result["frames"] if frames_result and "frames" in frames_result else []
+            frame_links = frame_links_result["frame_links"] if frame_links_result and "frame_links" in frame_links_result else []
+            
+            # Transform into visualization structure
+            nodes = []
+            links = []
+            
+            # Always add root node
+            nodes.append({
+                "id": "root",
+                "label": "Screen Recording Analysis",
+                "type": "root",
+                "group": "root"
+            })
+            
+            # If there are no frames, return minimal structure
+            if not frames:
+                logger.info("No frames found in Neo4j, returning minimal visualization")
+                return {
+                    "nodes": [
+                        {
+                            "id": "root",
+                            "label": "Screen Recording Analysis (No Data)",
+                            "type": "root",
+                            "group": "root"
+                        },
+                        {
+                            "id": "empty_state",
+                            "label": "No recording data available",
+                            "type": "container",
+                            "group": "timeline"
+                        }
+                    ],
+                    "links": [
+                        {
+                            "source": "root",
+                            "target": "empty_state",
+                            "type": "CONTAINS"
+                        }
+                    ]
+                }
+            
+            # Add timeline container
+            nodes.append({
+                "id": "timeline",
+                "label": f"Timeline ({len(frames)} frames)",
+                "type": "container",
+                "group": "timeline"
+            })
+            links.append({
+                "source": "root",
+                "target": "timeline",
+                "type": "CONTAINS"
+            })
+            
+            # Process frames
+            for frame in frames:
+                try:
+                    # Check if frame_id is defined and valid
+                    if "frame_id" not in frame or frame["frame_id"] is None:
+                        logger.warning(f"Frame missing frame_id: {frame}")
+                        continue
+                        
+                    frame_id = frame.get("frame_id", -1)
+                    timestamp = float(frame.get("timestamp", 0))
+                    node_id = f"frame_{frame_id}"
+                    
+                    # Create frame node with safe f-string formatting
+                    nodes.append({
+                        "id": node_id,
+                        "label": f"Frame {frame_id} ({timestamp:.1f}s)",
+                        "type": "frame",
+                        "group": "frame",
+                        "timestamp": timestamp,
+                        "description": frame.get("description", "")
+                    })
+                    
+                    # Link to timeline
+                    links.append({
+                        "source": "timeline",
+                        "target": node_id,
+                        "type": "CONTAINS"
+                    })
+                except Exception as e:
+                    logger.warning(f"Error processing frame {frame.get('frame_id', 'unknown')}: {e}")
+                    continue
+            
+            # Add temporal links between frames
+            for link in frame_links:
+                source_id = link.get("source")
+                target_id = link.get("target")
+                if source_id and target_id:
+                    links.append({
+                        "source": f"frame_{source_id}",
+                        "target": f"frame_{target_id}",
+                        "type": link.get("type", "NEXT")
+                    })
+            
+            # Extract insights from frame descriptions
+            insights = {}
+            for frame in frames:
+                if frame.get("description"):
+                    try:
+                        # Use the existing LLM to extract insights
+                        prompt = """Analyze this frame description and extract key elements:
+Description: {}
+
+Extract and categorize elements into these types:
+1. applications: List of application names or windows
+2. technical_terms: List of technical terms or concepts
+3. user_actions: List of user interactions or actions
+4. tasks: List of tasks or todos
+5. warnings: List of warnings or errors
+
+Return a Python dictionary with these exact keys and list values.
+Example:
+{{"applications": ["Chrome", "VS Code"], "technical_terms": ["API"], "user_actions": ["clicked button"], "tasks": ["fix bug"], "warnings": ["error"]}}""".format(frame.get("description", ""))
+                        
+                        response = knowledge_graph.llm.invoke(prompt)
+                        
+                        # Create a default fallback structure
+                        default_insights = {
+                            "applications": [],
+                            "technical_terms": [],
+                            "user_actions": [],
+                            "tasks": [],
+                            "warnings": []
+                        }
+                        
+                        # Extract text based on response type
+                        try:
+                            if hasattr(response, 'text'):
+                                if isinstance(response.text, str):
+                                    response_text = response.text.strip()
+                                elif callable(response.text):
+                                    response_text = str(response.text())
+                                else:
+                                    response_text = str(response)
+                            elif isinstance(response, str):
+                                response_text = response.strip()
+                            elif hasattr(response, 'content'):
+                                response_text = str(response.content)
+                            else:
+                                response_text = str(response)
+                                
+                            # Clean the response text to ensure it's valid Python literal
+                            response_text = response_text.replace("'", '"').replace('\n', ' ')
+                            
+                            # Try to parse as Python literal
+                            try:
+                                frame_insights = ast.literal_eval(response_text)
+                                
+                                # Validate the response structure
+                                expected_keys = {"applications", "technical_terms", "user_actions", "tasks", "warnings"}
+                                if not isinstance(frame_insights, dict) or not all(k in frame_insights for k in expected_keys):
+                                    logger.warning(f"Invalid insight format, using defaults")
+                                    frame_insights = default_insights
+                            except Exception as parsing_error:
+                                logger.warning(f"Error parsing insight JSON: {parsing_error}")
+                                frame_insights = default_insights
+                        except Exception as text_error:
+                            logger.warning(f"Error extracting response text: {text_error}")
+                            frame_insights = default_insights
+                            
+                        # Add insights to categories
+                        for category, items in frame_insights.items():
+                            if not isinstance(items, list):
+                                items = []
+                            if category not in insights:
+                                insights[category] = set()
+                            insights[category].update(items)
+                    except Exception as e:
+                        logger.warning(f"Error extracting insights from frame {frame.get('frame_id', 'unknown')}: {e}")
+                        # Add empty categories if needed
+                        for category in ["applications", "technical_terms", "user_actions", "tasks", "warnings"]:
+                            if category not in insights:
+                                insights[category] = set()
+                        continue
+            
+            # Add insight nodes
+            for category, items in insights.items():
+                try:
+                    # Add category container
+                    category_id = f"category_{category}"
+                    nodes.append({
+                        "id": category_id,
+                        "label": category.replace("_", " ").title(),
+                        "type": "container",
+                        "group": category
+                    })
+                    links.append({
+                        "source": "root",
+                        "target": category_id,
+                        "type": "CONTAINS"
+                    })
+                    
+                    # Add items
+                    for item in items:
+                        try:
+                            item_str = str(item)
+                            item_id = f"{category}_{abs(hash(item_str))}"  # Use abs to avoid negative hashes
+                            nodes.append({
+                                "id": item_id,
+                                "label": item_str,
+                                "type": "insight",
+                                "group": category
+                            })
+                            links.append({
+                                "source": category_id,
+                                "target": item_id,
+                                "type": "CONTAINS"
+                            })
+                        except Exception as e:
+                            logger.warning(f"Error processing insight item in category {category}: {e}")
+                            continue
+                except Exception as e:
+                    logger.warning(f"Error processing category {category}: {e}")
+                    continue
+            
+            return {
+                "nodes": nodes,
+                "links": links
+            }
+            
+    except Exception as e:
+        logger.error(f"Error creating visualization graph: {e}")
+        # Return a minimal valid structure instead of an error
+        return {
+            "nodes": [
+                {
+                    "id": "root",
+                    "label": "Screen Recording Analysis (Error)",
+                    "type": "root",
+                    "group": "root"
+                },
+                {
+                    "id": "error_state",
+                    "label": f"Error: {str(e)}",
+                    "type": "container",
+                    "group": "warnings"
+                }
+            ],
+            "links": [
+                {
+                    "source": "root",
+                    "target": "error_state",
+                    "type": "CONTAINS"
+                }
+            ]
+        } 

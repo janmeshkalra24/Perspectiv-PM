@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Box, Container, Typography, Grid, Paper, CircularProgress, LinearProgress, Divider, Button, TextField, IconButton, Tooltip } from '@mui/material';
 import { List, AutoSizer } from 'react-virtualized';
 import axios from 'axios';
@@ -8,8 +8,10 @@ import SendIcon from '@mui/icons-material/Send';
 import MicIcon from '@mui/icons-material/Mic';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import StopIcon from '@mui/icons-material/Stop';
+import ForceGraph2D from 'react-force-graph-2d';
+import CloseIcon from '@mui/icons-material/Close';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://localhost:8001';
 
 function BufferHealthIndicator({ health, maxFrames, currentFrames }) {
   // Calculate color based on health (processed frames ratio)
@@ -538,58 +540,27 @@ function ChatInterface({ context, currentFrame }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [sttError, setSTTError] = useState(null);
+  const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const chatContainerRef = useRef(null);
   const recognitionRef = useRef(null);
 
+  // Fetch graph data periodically
   useEffect(() => {
-    // Initialize speech recognition with broader browser support
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
-      
-      recognitionRef.current.onstart = () => {
-        setIsRecording(true);
-        setSTTError(null);
-      };
-      
-      recognitionRef.current.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map(result => result[0].transcript)
-          .join('');
-        setInput(transcript);
-      };
-      
-      recognitionRef.current.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        setIsRecording(false);
-        switch (event.error) {
-          case 'not-allowed':
-            setSTTError('Microphone access denied. Please allow microphone access in your browser settings.');
-            break;
-          case 'no-speech':
-            setSTTError('No speech detected. Please try speaking again.');
-            break;
-          case 'network':
-            setSTTError('Network error occurred. Please check your connection.');
-            break;
-          default:
-            setSTTError(`Error: ${event.error}`);
-        }
-      };
-      
-      recognitionRef.current.onend = () => {
-        setIsRecording(false);
-      };
-    }
-    
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+    const fetchGraphData = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/visualization_graph`);
+        setGraphData(response.data);
+      } catch (error) {
+        console.error('Error fetching graph data:', error);
       }
     };
+
+    // Initial fetch
+    fetchGraphData();
+
+    // Set up polling
+    const interval = setInterval(fetchGraphData, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -650,82 +621,328 @@ function ChatInterface({ context, currentFrame }) {
   };
 
   return (
-    <Paper sx={{ p: 2, mt: 3 }}>
-      <Typography variant="h6" gutterBottom>
-        Chat Interface
+    <Paper sx={{ p: 2, mt: 3, display: 'flex', gap: 2 }}>
+      {/* Chat section */}
+      <Box sx={{ flex: 2 }}>
+        <Typography variant="h6" gutterBottom>
+          Chat Interface
+        </Typography>
+        <Box
+          ref={chatContainerRef}
+          sx={{
+            height: '300px',
+            overflowY: 'auto',
+            mb: 2,
+            p: 2,
+            bgcolor: 'background.default',
+            borderRadius: 1
+          }}
+        >
+          {messages.map((message, index) => (
+            <ChatMessage
+              key={index}
+              message={message}
+              isUser={message.role === 'user'}
+            />
+          ))}
+          {isLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+              <CircularProgress size={24} />
+            </Box>
+          )}
+        </Box>
+        <Grid container spacing={1} alignItems="center">
+          <Grid item xs>
+            <TextField
+              fullWidth
+              variant="outlined"
+              placeholder="Ask about what's happening in the screen recording..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
+              disabled={isLoading || isRecording}
+              error={!!sttError}
+              helperText={sttError}
+            />
+          </Grid>
+          <Grid item>
+            <Tooltip title={isRecording ? "Stop recording" : "Start voice input"}>
+              <IconButton
+                color={isRecording ? "error" : "primary"}
+                onClick={toggleRecording}
+                disabled={isLoading}
+                sx={{
+                  animation: isRecording ? 'pulse 1.5s ease-in-out infinite' : 'none',
+                  '@keyframes pulse': {
+                    '0%': { opacity: 1 },
+                    '50%': { opacity: 0.5 },
+                    '100%': { opacity: 1 },
+                  },
+                }}
+              >
+                {isRecording ? <StopIcon /> : <MicIcon />}
+              </IconButton>
+            </Tooltip>
+          </Grid>
+          <Grid item>
+            <IconButton
+              color="primary"
+              onClick={handleSendMessage}
+              disabled={isLoading || !input.trim()}
+            >
+              <SendIcon />
+            </IconButton>
+          </Grid>
+        </Grid>
+      </Box>
+
+      {/* Knowledge Graph section */}
+      <Box sx={{ flex: 1, minWidth: 0, height: '400px' }}>
+        <KnowledgeGraphVisualization graphData={graphData} />
+      </Box>
+    </Paper>
+  );
+}
+
+function KnowledgeGraphVisualization({ graphData }) {
+  const fgRef = useRef();
+  const [selectedNode, setSelectedNode] = useState(null);
+  const [nodeDetails, setNodeDetails] = useState(null);
+
+  // Handle node click
+  const handleNodeClick = useCallback(node => {
+    setSelectedNode(node);
+    setNodeDetails({
+      label: node.label,
+      type: node.type,
+      group: node.group,
+      details: {
+        timestamp: node.timestamp,
+        description: node.description
+      }
+    });
+  }, []);
+
+  // Color scheme for different node types
+  const getNodeColor = node => {
+    const colors = {
+      root: '#FF9800',
+      timeline: '#4CAF50',
+      frame: '#81C784',
+      applications: '#2196F3',
+      technical_terms: '#9C27B0',
+      user_actions: '#3F51B5',
+      tasks: '#FF5722',
+      warnings: '#f44336'
+    };
+    return colors[node.group] || '#999';
+  };
+
+  // Node size based on type
+  const getNodeSize = node => {
+    switch (node.type) {
+      case 'root':
+        return 15;
+      case 'container':
+        return 12;
+      case 'frame':
+        return 8;
+      case 'insight':
+        return 6;
+      default:
+        return 8;
+    }
+  };
+
+  return (
+    <Paper sx={{ 
+      p: 1, 
+      height: '100%', 
+      display: 'flex', 
+      flexDirection: 'column',
+      overflow: 'hidden'
+    }}>
+      <Typography variant="subtitle2" gutterBottom>
+        Knowledge Graph Insights
       </Typography>
-      <Box
-        ref={chatContainerRef}
-        sx={{
-          height: '300px',
-          overflowY: 'auto',
-          mb: 2,
-          p: 2,
-          bgcolor: 'background.default',
+      
+      <Box sx={{ 
+        flex: 1,
+        minHeight: 0,
+        height: '350px',
+        position: 'relative',
+        '& canvas': {
           borderRadius: 1
-        }}
-      >
-        {messages.map((message, index) => (
-          <ChatMessage
-            key={index}
-            message={message}
-            isUser={message.role === 'user'}
-          />
-        ))}
-        {isLoading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress size={24} />
-          </Box>
+        }
+      }}>
+        <ForceGraph2D
+          ref={fgRef}
+          graphData={graphData}
+          nodeLabel={node => node.label}
+          nodeColor={getNodeColor}
+          nodeRelSize={node => getNodeSize(node)}
+          linkDirectional={true}
+          linkDirectionalParticles={2}
+          linkDirectionalParticleSpeed={0.005}
+          backgroundColor="#1a1b1e"
+          linkWidth={1.5}
+          linkColor={() => 'rgba(255,255,255,0.2)'}
+          d3VelocityDecay={0.3}
+          cooldownTicks={50}
+          onNodeClick={handleNodeClick}
+          nodeCanvasObject={(node, ctx, globalScale) => {
+            const label = String(node.label || '');
+            const fontSize = 12/globalScale;
+            ctx.font = `${fontSize}px Sans-Serif`;
+            ctx.fillStyle = getNodeColor(node);
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, getNodeSize(node), 0, 2 * Math.PI, false);
+            ctx.fill();
+            
+            if (node === selectedNode) {
+              ctx.strokeStyle = '#fff';
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
+            
+            const maxLineLength = 20;
+            const words = label.split(' ');
+            const lines = [];
+            let currentLine = '';
+            
+            words.forEach(word => {
+              if (currentLine.length + word.length > maxLineLength) {
+                lines.push(currentLine);
+                currentLine = word;
+              } else {
+                currentLine = currentLine ? `${currentLine} ${word}` : word;
+              }
+            });
+            if (currentLine) {
+              lines.push(currentLine);
+            }
+            
+            const lineHeight = fontSize * 1.2;
+            const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width));
+            
+            // Draw label background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(
+              node.x - maxWidth/2 - 2,
+              node.y + 10,
+              maxWidth + 4,
+              lineHeight * lines.length + 4
+            );
+            
+            // Draw text
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'white';
+            lines.forEach((line, i) => {
+              ctx.fillText(
+                line,
+                node.x,
+                node.y + 10 + lineHeight * (i + 0.5)
+              );
+            });
+          }}
+        />
+        
+        {/* Node details panel */}
+        {nodeDetails && (
+          <Paper
+            sx={{
+              position: 'absolute',
+              top: 10,
+              right: 10,
+              width: '250px',
+              maxHeight: '330px',
+              overflow: 'auto',
+              backgroundColor: 'rgba(0, 0, 0, 0.85)',
+              color: 'white',
+              p: 2,
+              borderRadius: 1
+            }}
+          >
+            <Typography variant="subtitle2" gutterBottom>
+              {nodeDetails.label}
+            </Typography>
+            <Typography variant="caption" component="div" sx={{ mb: 1, opacity: 0.7 }}>
+              Type: {nodeDetails.type}
+            </Typography>
+            {nodeDetails.details.timestamp && (
+              <Typography variant="caption" component="div" sx={{ mb: 1, opacity: 0.7 }}>
+                Timestamp: {nodeDetails.details.timestamp.toFixed(1)}s
+              </Typography>
+            )}
+            {nodeDetails.details.description && (
+              <>
+                <Divider sx={{ my: 1, borderColor: 'rgba(255,255,255,0.1)' }} />
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {nodeDetails.details.description}
+                </Typography>
+              </>
+            )}
+            <IconButton
+              size="small"
+              sx={{ position: 'absolute', top: 8, right: 8, color: 'white' }}
+              onClick={() => setNodeDetails(null)}
+            >
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Paper>
         )}
       </Box>
-      <Grid container spacing={1} alignItems="center">
-        <Grid item xs>
-          <TextField
-            fullWidth
-            variant="outlined"
-            placeholder="Ask about what's happening in the screen recording..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSendMessage();
-              }
-            }}
-            disabled={isLoading || isRecording}
-            error={!!sttError}
-            helperText={sttError}
-          />
+
+      {/* Legend */}
+      <Box sx={{ mt: 1, fontSize: '0.75rem' }}>
+        <Typography variant="caption" component="div" sx={{ mb: 0.5 }}>
+          Legend:
+        </Typography>
+        <Grid container spacing={1}>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#4CAF50' }} />
+              <Typography variant="caption">Timeline</Typography>
+            </Box>
+          </Grid>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#2196F3' }} />
+              <Typography variant="caption">Applications</Typography>
+            </Box>
+          </Grid>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#9C27B0' }} />
+              <Typography variant="caption">Technical Terms</Typography>
+            </Box>
+          </Grid>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#3F51B5' }} />
+              <Typography variant="caption">User Actions</Typography>
+            </Box>
+          </Grid>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#FF5722' }} />
+              <Typography variant="caption">Tasks</Typography>
+            </Box>
+          </Grid>
+          <Grid item xs={6}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#f44336' }} />
+              <Typography variant="caption">Warnings</Typography>
+            </Box>
+          </Grid>
         </Grid>
-        <Grid item>
-          <Tooltip title={isRecording ? "Stop recording" : "Start voice input"}>
-            <IconButton
-              color={isRecording ? "error" : "primary"}
-              onClick={toggleRecording}
-              disabled={isLoading}
-              sx={{
-                animation: isRecording ? 'pulse 1.5s ease-in-out infinite' : 'none',
-                '@keyframes pulse': {
-                  '0%': { opacity: 1 },
-                  '50%': { opacity: 0.5 },
-                  '100%': { opacity: 1 },
-                },
-              }}
-            >
-              {isRecording ? <StopIcon /> : <MicIcon />}
-            </IconButton>
-          </Tooltip>
-        </Grid>
-        <Grid item>
-          <IconButton
-            color="primary"
-            onClick={handleSendMessage}
-            disabled={isLoading || !input.trim()}
-          >
-            <SendIcon />
-          </IconButton>
-        </Grid>
-      </Grid>
+      </Box>
     </Paper>
   );
 }
@@ -738,6 +955,7 @@ function App() {
   const [error, setError] = useState(null);
   const [contextError, setContextError] = useState(null);
   const [currentFrame, setCurrentFrame] = useState(null);
+  const [graphData, setGraphData] = useState({ nodes: [], links: [] });
 
   useEffect(() => {
     fetchFrames();
@@ -788,6 +1006,24 @@ function App() {
       setContextError(err.message);
     }
   };
+
+  const fetchGraphData = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/graph_data`);
+      setGraphData(response.data);
+    } catch (error) {
+      console.error('Error fetching graph data:', error);
+    }
+  };
+
+  useEffect(() => {
+    // Add graph data fetching to the existing polling
+    const interval = setInterval(() => {
+      fetchGraphData();
+    }, 5000); // Update every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
 
   const renderFrame = ({ index, key, style }) => {
     const frame = frames[index];
@@ -886,56 +1122,31 @@ function App() {
   }
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ my: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          Perspectiv Screen Understanding Demo
-        </Typography>
-        
-        <VideoUploadControls 
-          onDataCleared={handleDataCleared}
-        />
-        
-        {loading ? (
-          <CircularProgress />
-        ) : error ? (
-          <Typography color="error">{error}</Typography>
-        ) : (
-          <>
-            <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
-                <Paper sx={{ p: 2, height: '100%' }}>
-                  <Typography variant="h6">Frame Information</Typography>
-                  <Typography>Total Frames: {totalFrames}</Typography>
-                  {context?.buffer_stats && (
-                    <>
-                      <BufferHealthIndicator health={context.buffer_stats.buffer_health} maxFrames={totalFrames} currentFrames={context.buffer_stats.frames_in_buffer} />
-                      <BufferStats stats={context.buffer_stats} />
-                    </>
-                  )}
-                </Paper>
-              </Grid>
-              
-              <Grid item xs={12} md={8}>
-                <Paper sx={{ p: 2, maxHeight: 600, overflow: 'auto' }}>
-                  <Typography variant="h6">Context Timeline</Typography>
-                  {contextError ? (
-                    <Typography color="error">{contextError}</Typography>
-                  ) : (
-                    <ContextTimeline context={context} />
-                  )}
-                </Paper>
-              </Grid>
-            </Grid>
+    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
+      <Container maxWidth={false} sx={{ flex: 1, py: 2, display: 'flex', flexDirection: 'column' }}>
+        <Grid container spacing={2} sx={{ flex: 1, minHeight: 0 }}>
+          <Grid item xs={12}>
+            <Paper sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h5" gutterBottom>Debug UI</Typography>
+              <VideoUploadControls onDataCleared={handleDataCleared} />
+              <BufferStats stats={context?.buffer_stats} />
+            </Paper>
+            
+            <Paper sx={{ p: 2, mb: 2, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <Typography variant="h6" gutterBottom>Context Timeline</Typography>
+              <Box sx={{ flex: 1, overflow: 'auto' }}>
+                <ContextTimeline context={context} />
+              </Box>
+            </Paper>
             
             <ChatInterface 
-              context={context}
-              currentFrame={currentFrame}
+              context={context} 
+              currentFrame={currentFrame} 
             />
-          </>
-        )}
-      </Box>
-    </Container>
+          </Grid>
+        </Grid>
+      </Container>
+    </Box>
   );
 }
 
