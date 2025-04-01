@@ -9,11 +9,13 @@
     "@mui/lab": "^5.0.0-alpha.165",
     "@mui/material": "^5.15.10",
     "axios": "^1.6.7",
+    "d3": "^7.8.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.1",
     "react-scripts": "5.0.1",
-    "react-virtualized": "^9.22.5"
+    "react-virtualized": "^9.22.5",
+    "styled-components": "^6.1.8"
   },
   "scripts": {
     "start": "react-scripts start",

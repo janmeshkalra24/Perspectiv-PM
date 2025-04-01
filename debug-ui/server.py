@@ -20,8 +20,16 @@ from dotenv import load_dotenv
 
 app = FastAPI()
 
+# Configure logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Load environment variables
 load_dotenv()
+
+# Add port configuration
+PORT = int(os.getenv('PORT', 8000))  # Default to 8000 if not specified
+logger.info(f"Server configured to run on port {PORT}")
 
 # Configure Gemini
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
@@ -47,10 +55,6 @@ DEBUG_UI_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Redis connection
 redis_client = redis.Redis(host='localhost', port=6379, db=0)
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Context file path - look in workspace root first, then data directory
 CONTEXT_FILE_PATHS = [

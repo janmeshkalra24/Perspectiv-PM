@@ -8,6 +8,8 @@ import SendIcon from '@mui/icons-material/Send';
 import MicIcon from '@mui/icons-material/Mic';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import StopIcon from '@mui/icons-material/Stop';
+import WarningsSection from './components/WarningsSection';
+import MindMap from './components/MindMap';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -37,6 +39,15 @@ function BufferHealthIndicator({ health, maxFrames, currentFrames }) {
 
 function ContextTimeline({ context }) {
   if (!context || !context.context) return null;
+  
+  // Format timestamp consistently 
+  const formatTimestamp = (seconds) => {
+    if (seconds === undefined || seconds === null) return "unknown time";
+    
+    const minutes = Math.floor(seconds / 60);
+    const remainingSecs = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSecs.toString().padStart(2, '0')}`;
+  };
   
   return (
     <Timeline sx={{ 
@@ -87,13 +98,13 @@ function ContextTimeline({ context }) {
                       textAlign: 'center'
                     }}
                   >
-                    {entry.metadata?.timestamp?.toFixed(1)}s
+                    {entry.metadata?.timestamp ? formatTimestamp(entry.metadata.timestamp) : 'N/A'}
                   </Box>
                 </Paper>
               )}
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                  Frame {entry.frame_index} at {entry.metadata?.timestamp?.toFixed(1)}s
+                  Frame {entry.frame_index} at {entry.metadata?.timestamp ? formatTimestamp(entry.metadata.timestamp) : 'N/A'}
                 </Typography>
                 <Paper 
                   sx={{ 
@@ -738,6 +749,13 @@ function App() {
   const [error, setError] = useState(null);
   const [contextError, setContextError] = useState(null);
   const [currentFrame, setCurrentFrame] = useState(null);
+  const [mindMapData, setMindMapData] = useState(null);
+  const [warningsData, setWarningsData] = useState({ warnings: [], redFlags: [] });
+
+  // Add memoization and throttling to prevent excessive updates
+  const [lastContextHash, setLastContextHash] = useState('');
+  const [updateTimeout, setUpdateTimeout] = useState(null);
+  const [manualRefreshEnabled, setManualRefreshEnabled] = useState(true);
 
   useEffect(() => {
     fetchFrames();
@@ -862,6 +880,819 @@ function App() {
     fetchContext();
   };
 
+  // Add fallback data for mind map in case API fails
+  const createDefaultMindMap = () => {
+    return {
+      nodes: [
+        { id: 'main', name: 'Screen Recording', type: 'app' },
+        { id: 'summary', name: 'Summary', type: 'summary', details: 'Analysis of screen recording content' },
+        { id: 'tasks', name: 'Tasks', type: 'tasks', details: 'Identified tasks from the recording' },
+        { id: 'terms', name: 'Technical Terms', type: 'terms', details: 'Technical terminology found in the recording' }
+      ],
+      links: [
+        { source: 'main', target: 'summary' },
+        { source: 'main', target: 'tasks' },
+        { source: 'main', target: 'terms' }
+      ]
+    };
+  };
+
+  // Add fallback data for warnings in case API fails
+  const createDefaultWarnings = () => {
+    return {
+      redFlags: [],
+      warnings: [
+        {
+          title: "No content analyzed yet",
+          time: new Date().toLocaleTimeString(),
+          details: "Upload a video to analyze content and generate insights."
+        }
+      ]
+    };
+  };
+
+  // Add a more sophisticated mind map data structure
+  const createEnhancedMindMap = (contextData) => {
+    if (!contextData || !contextData.context || contextData.context.length === 0) {
+      return createDefaultMindMap();
+    }
+
+    try {
+      // Create multiple disconnected clusters/categories for better organization
+      const mindMap = {
+        nodes: [
+          // Main engineering categories - not all connected to a central node
+          { id: 'backend', name: 'Backend Systems', type: 'app', details: 'Backend systems and architecture issues' },
+          { id: 'frontend', name: 'Frontend & UI', type: 'app', details: 'Frontend, UI, and user experience concerns' },
+          { id: 'infra', name: 'Infrastructure', type: 'app', details: 'Infrastructure, deployment, and DevOps concerns' },
+          { id: 'process', name: 'Process & Planning', type: 'app', details: 'Development process, planning, and team concerns' },
+          { id: 'product', name: 'Product Features', type: 'app', details: 'Product features, requirements, and deliverables' },
+        ],
+        links: []
+      };
+      
+      // Advanced technical terminology by category for engineering context
+      const advancedTerminology = {
+        backend: [
+          { term: 'microservices', def: 'Architecture pattern where applications are built as independent services' },
+          { term: 'serverless', def: 'Cloud computing model where the cloud provider manages server infrastructure' },
+          { term: 'ORM', def: 'Object-Relational Mapping - technique for converting data between incompatible type systems' },
+          { term: 'GraphQL', def: 'Query language for APIs and runtime for executing those queries' },
+          { term: 'caching', def: 'Storing copies of data in a high-speed data storage layer' },
+          { term: 'horizontal scaling', def: 'Adding more machines to a system to handle increased load' },
+          { term: 'sharding', def: 'Database partitioning technique to distribute data across multiple machines' },
+          { term: 'message queue', def: 'Communication method between processes, services or systems' },
+          { term: 'webhooks', def: 'User-defined HTTP callbacks triggered by specific events' },
+          { term: 'idempotency', def: 'Property where an operation can be applied multiple times without changing the result' }
+        ],
+        frontend: [
+          { term: 'state management', def: 'Pattern for managing application state across components' },
+          { term: 'code splitting', def: 'Technique to split code into various bundles for on-demand loading' },
+          { term: 'lazy loading', def: 'Design pattern to defer initialization of resources until needed' },
+          { term: 'design system', def: 'Collection of reusable components guided by standards' },
+          { term: 'accessibility', def: 'Practice of making applications usable by people with disabilities' },
+          { term: 'SSR', def: 'Server-Side Rendering - rendering pages on the server instead of browser' },
+          { term: 'CSR', def: 'Client-Side Rendering - rendering pages directly in the browser with JavaScript' },
+          { term: 'WASM', def: 'WebAssembly - binary instruction format for stack-based virtual machines' },
+          { term: 'SPA', def: 'Single-Page Application - web app that loads a single HTML page' },
+          { term: 'PWA', def: 'Progressive Web App - web app that offers native-app-like experience' }
+        ],
+        infrastructure: [
+          { term: 'kubernetes', def: 'Container orchestration system for automating deployment and scaling' },
+          { term: 'CI/CD', def: 'Continuous Integration/Continuous Deployment - automating build, test, and deployment' },
+          { term: 'infrastructure as code', def: 'Managing infrastructure through machine-readable definition files' },
+          { term: 'blue-green deployment', def: 'Deployment strategy with two identical production environments' },
+          { term: 'observability', def: 'Measuring the internal state of a system from its outputs' },
+          { term: 'containerization', def: 'OS-level virtualization to deploy and run applications without launching VMs' },
+          { term: 'service mesh', def: 'Infrastructure layer for service-to-service communication' },
+          { term: 'chaos engineering', def: 'Practice of experimenting on a system to build confidence in its capabilities' },
+          { term: 'zero-trust security', def: 'Security concept centered on the belief that organizations should not trust anything' },
+          { term: 'autoscaling', def: 'Automatically adjusting computational resources based on traffic' }
+        ],
+        process: [
+          { term: 'technical debt', def: 'Cost of additional work caused by choosing easy solution now over better approach' },
+          { term: 'velocity', def: 'Measure of work completed in a sprint or time period' },
+          { term: 'scrum', def: 'Framework for managing complex knowledge work with emphasis on software development' },
+          { term: 'kanban', def: 'Method for managing knowledge work with emphasis on continuous delivery' },
+          { term: 'pair programming', def: 'Development technique where two programmers work together on one workstation' },
+          { term: 'story point', def: 'Abstract measure of effort required to implement a user story' },
+          { term: 'code review', def: 'Systematic examination of code to find and fix mistakes overlooked in development' },
+          { term: 'sprint planning', def: 'Event in Scrum where team decides what to complete in coming sprint' },
+          { term: 'definition of done', def: 'Shared understanding of what it means for work to be complete' },
+          { term: 'retrospective', def: 'Meeting held after completion of an iteration to reflect on what happened' }
+        ],
+        product: [
+          { term: 'MVP', def: 'Minimum Viable Product - version with just enough features to satisfy early customers' },
+          { term: 'user story', def: 'Informal explanation of a software feature from end-user perspective' },
+          { term: 'acceptance criteria', def: 'Conditions that a software product must meet to be accepted by users' },
+          { term: 'feature flag', def: 'Technique to turn functionality on/off during runtime without deployment' },
+          { term: 'A/B testing', def: 'Method of comparing two versions of a webpage or app against each other' },
+          { term: 'product backlog', def: 'Prioritized list of work for the development team derived from roadmap' },
+          { term: 'user persona', def: 'Fictional character created to represent a user type that might use a product' },
+          { term: 'user journey', def: 'Series of steps a user takes to achieve a meaningful goal with your product' },
+          { term: 'OKR', def: 'Objective and Key Results - framework for defining and tracking objectives and outcomes' },
+          { term: 'stakeholder management', def: 'Process of identifying and engaging people affected by the project' }
+        ]
+      };
+
+      // Look for discussion around specific terms in the context
+      function findTermMentionsInContext(term, context) {
+        let mentions = [];
+        context.forEach(frame => {
+          if (!frame.description) return;
+          
+          // Check for mentions of the term
+          if (frame.description.toLowerCase().includes(term.toLowerCase())) {
+            // Extract the sentence containing the term
+            const sentences = frame.description.split(/[.!?]+/);
+            for (const sentence of sentences) {
+              if (sentence.toLowerCase().includes(term.toLowerCase())) {
+                const formattedTimestamp = frame.metadata?.timestamp 
+                  ? `${Math.floor(frame.metadata.timestamp / 60)}:${(frame.metadata.timestamp % 60).toFixed(0).padStart(2, '0')}`
+                  : 'unknown time';
+                  
+                mentions.push({
+                  sentence: sentence.trim(),
+                  timestamp: formattedTimestamp
+                });
+              }
+            }
+          }
+        });
+        return mentions;
+      }
+      
+      // Create clear buckets for different role-related information based on PM needs
+      const roleInfo = {
+        engineers: new Set(),
+        managers: new Set(),
+        stakeholders: new Set()
+      };
+      
+      const actionItems = new Set();
+      const blockers = new Set();
+      const decisions = new Set();
+      const openQuestions = new Set();
+      
+      // Topic discussions with specific engineering focus
+      const discussedTopics = {
+        backend: new Set(),
+        frontend: new Set(),
+        infrastructure: new Set(),
+        process: new Set(),
+        product: new Set()
+      };
+      
+      // Extract technical terms from context data
+      const mentionedTerms = new Map();
+      
+      // Term detection for advanced terminology
+      Object.keys(advancedTerminology).forEach(category => {
+        advancedTerminology[category].forEach(termObj => {
+          const foundMentions = findTermMentionsInContext(termObj.term, contextData.context);
+          if (foundMentions.length > 0) {
+            // Save the term with its definition and any context-specific usage
+            mentionedTerms.set(termObj.term, {
+              definition: termObj.def,
+              category,
+              mentions: foundMentions
+            });
+          }
+        });
+      });
+      
+      // Extract role-specific info and PM-focused insights
+      contextData.context.forEach(frame => {
+        if (!frame.description) return;
+        
+        const description = frame.description;
+        const timestamp = frame.metadata?.timestamp 
+          ? `${Math.floor(frame.metadata.timestamp / 60)}:${(frame.metadata.timestamp % 60).toFixed(0).padStart(2, '0')}`
+          : 'unknown time';
+          
+        // Extract role information
+        if (/\b(?:engineer|developer|programmer|coder)\b/i.test(description)) {
+          const nameMatch = description.match(/\b([A-Z][a-z]+ (?:[A-Z][a-z]+)?)(?:\s+(?:is|as|the)\s+(?:an\s+)?(?:engineer|developer))/i);
+          if (nameMatch && nameMatch[1]) {
+            roleInfo.engineers.add(nameMatch[1]);
+          }
+        }
+        
+        if (/\b(?:manager|lead|PM|product owner)\b/i.test(description)) {
+          const nameMatch = description.match(/\b([A-Z][a-z]+ (?:[A-Z][a-z]+)?)(?:\s+(?:is|as|the)\s+(?:a\s+)?(?:manager|lead|PM))/i);
+          if (nameMatch && nameMatch[1]) {
+            roleInfo.managers.add(nameMatch[1]);
+          }
+        }
+        
+        if (/\b(?:stakeholder|client|customer|user|executive)\b/i.test(description)) {
+          const nameMatch = description.match(/\b([A-Z][a-z]+ (?:[A-Z][a-z]+)?)(?:\s+(?:is|as|the)\s+(?:a\s+)?(?:stakeholder|client))/i);
+          if (nameMatch && nameMatch[1]) {
+            roleInfo.stakeholders.add(nameMatch[1]);
+          }
+        }
+        
+        // Extract action items
+        if (/\b(?:will|should|must|going to|need to|has to|assigned to)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:will|should|must|going to|need to|has to|assigned to)\b/i.test(sentence)) {
+              actionItems.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        // Extract blockers
+        if (/\b(?:blocker|blocking|blocked|impediment|obstacle|stuck)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:blocker|blocking|blocked|impediment|obstacle|stuck)\b/i.test(sentence)) {
+              blockers.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        // Extract decisions
+        if (/\b(?:decided|agreed|concluded|determined|resolved|approved|chose|finalized|confirmed)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:decided|agreed|concluded|determined|resolved|approved|chose|finalized|confirmed)\b/i.test(sentence)) {
+              decisions.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        // Extract open questions
+        if (/\b(?:question|wondering|unclear|not sure|don't know|need to figure out|tbd|to be determined)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:question|wondering|unclear|not sure|don't know|need to figure out|tbd|to be determined)\b/i.test(sentence)) {
+              openQuestions.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        // Categorize discussions by topic
+        if (/\b(?:api|database|backend|server|microservice|endpoint)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:api|database|backend|server|microservice|endpoint)\b/i.test(sentence)) {
+              discussedTopics.backend.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        if (/\b(?:ui|ux|interface|frontend|css|design|component|user experience)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:ui|ux|interface|frontend|css|design|component|user experience)\b/i.test(sentence)) {
+              discussedTopics.frontend.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        if (/\b(?:deploy|infrastructure|cloud|aws|azure|kubernetes|docker|ci\/cd|devops)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:deploy|infrastructure|cloud|aws|azure|kubernetes|docker|ci\/cd|devops)\b/i.test(sentence)) {
+              discussedTopics.infrastructure.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        if (/\b(?:sprint|agile|process|velocity|timeline|deadline|scrum|kanban|standup|meeting)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:sprint|agile|process|velocity|timeline|deadline|scrum|kanban|standup|meeting)\b/i.test(sentence)) {
+              discussedTopics.process.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+        
+        if (/\b(?:feature|product|requirement|user story|acceptance criteria|mvp|roadmap|epic|release)\b/i.test(description)) {
+          const sentences = description.split(/[.!?]+/);
+          for (const sentence of sentences) {
+            if (/\b(?:feature|product|requirement|user story|acceptance criteria|mvp|roadmap|epic|release)\b/i.test(sentence)) {
+              discussedTopics.product.add(`${sentence.trim()} (${timestamp})`);
+            }
+          }
+        }
+      });
+
+      // Utility function to create nodes and links
+      let idCounter = 1;
+      function addSubNodes(parentId, items, type, prefix) {
+        // Limit to 5 items per parent to avoid overloading
+        const limitedItems = Array.from(items).slice(0, 5);
+        
+        limitedItems.forEach(item => {
+          const id = `${prefix}-${idCounter++}`;
+          
+          // Extract a concise name (up to first comma or parenthesis or after 20 chars)
+          let conciseName = '';
+          if (typeof item === 'string') {
+            // Remove timestamp if present at the end in parentheses
+            const withoutTimestamp = item.split(' (')[0];
+            // Take first 20 chars or up to first punctuation that might separate ideas
+            const firstPunctuation = withoutTimestamp.search(/[,;:]/);
+            if (firstPunctuation > 0 && firstPunctuation < 20) {
+              conciseName = withoutTimestamp.substring(0, firstPunctuation);
+            } else {
+              conciseName = withoutTimestamp.substring(0, Math.min(20, withoutTimestamp.length));
+            }
+            
+            // Add ellipsis if truncated
+            if (conciseName.length < withoutTimestamp.length) {
+              conciseName += '...';
+            }
+          } else {
+            conciseName = item;
+          }
+          
+          mindMap.nodes.push({
+            id,
+            name: conciseName,
+            type,
+            details: typeof item === 'string' ? item : `${item}`
+          });
+          mindMap.links.push({ source: parentId, target: id });
+        });
+      }
+      
+      // Add technical terms nodes (only if there are mentions)
+      if (mentionedTerms.size > 0) {
+        // Create term cluster nodes if needed
+        const termCategories = {
+          backend: { id: 'tech-backend', name: 'Backend Terms', created: false },
+          frontend: { id: 'tech-frontend', name: 'Frontend Terms', created: false },
+          infrastructure: { id: 'tech-infra', name: 'Infrastructure Terms', created: false },
+          process: { id: 'tech-process', name: 'Process Terms', created: false },
+          product: { id: 'tech-product', name: 'Product Terms', created: false }
+        };
+        
+        // Group terms by category
+        const termsByCategory = {
+          backend: [],
+          frontend: [],
+          infrastructure: [],
+          process: [],
+          product: []
+        };
+        
+        mentionedTerms.forEach((details, term) => {
+          termsByCategory[details.category].push({
+            term,
+            details: details
+          });
+        });
+        
+        // Add nodes for each category with terms
+        Object.keys(termsByCategory).forEach(category => {
+          if (termsByCategory[category].length > 0) {
+            // Create category node if it has terms
+            if (!termCategories[category].created) {
+              mindMap.nodes.push({
+                id: termCategories[category].id,
+                name: termCategories[category].name,
+                type: 'terms',
+                details: `Technical terminology related to ${category} discussed in the meeting`
+              });
+              termCategories[category].created = true;
+              
+              // Link to main category
+              const mainCategoryMap = {
+                backend: 'backend',
+                frontend: 'frontend',
+                infrastructure: 'infra',
+                process: 'process',
+                product: 'product'
+              };
+              mindMap.links.push({ 
+                source: mainCategoryMap[category], 
+                target: termCategories[category].id 
+              });
+            }
+            
+            // Add term nodes (limit to 5 per category to avoid crowding)
+            termsByCategory[category].slice(0, 5).forEach(termObj => {
+              const id = `term-${idCounter++}`;
+              const details = termObj.details;
+              
+              // Format details with definition and context mentions
+              let formattedDetails = `**${termObj.term}**: ${details.definition}\n\n**Context:**\n`;
+              details.mentions.forEach(mention => {
+                formattedDetails += `- "${mention.sentence}" (${mention.timestamp})\n`;
+              });
+              
+              mindMap.nodes.push({
+                id,
+                name: termObj.term,
+                type: 'terms',
+                details: formattedDetails
+              });
+              
+              mindMap.links.push({ 
+                source: termCategories[category].id, 
+                target: id 
+              });
+            });
+          }
+        });
+      }
+      
+      // Action items - connected to Process node
+      if (actionItems.size > 0) {
+        const actionNodeId = 'action-items';
+        mindMap.nodes.push({
+          id: actionNodeId,
+          name: 'Action Items',
+          type: 'tasks',
+          details: 'Tasks to be completed'
+        });
+        mindMap.links.push({ source: 'process', target: actionNodeId });
+        
+        addSubNodes(actionNodeId, actionItems, 'tasks', 'action');
+      }
+      
+      // Blockers - connected to Process node
+      if (blockers.size > 0) {
+        const blockerNodeId = 'blockers';
+        mindMap.nodes.push({
+          id: blockerNodeId,
+          name: 'Blockers',
+          type: 'redFlags',
+          details: 'Issues blocking progress'
+        });
+        mindMap.links.push({ source: 'process', target: blockerNodeId });
+        
+        addSubNodes(blockerNodeId, blockers, 'redFlags', 'blocker');
+      }
+      
+      // Decisions - connected to Process node
+      if (decisions.size > 0) {
+        const decisionNodeId = 'decisions';
+        mindMap.nodes.push({
+          id: decisionNodeId,
+          name: 'Decisions',
+          type: 'summary',
+          details: 'Decisions made during the meeting'
+        });
+        mindMap.links.push({ source: 'process', target: decisionNodeId });
+        
+        addSubNodes(decisionNodeId, decisions, 'summary', 'decision');
+      }
+      
+      // Open Questions - connected to Process node
+      if (openQuestions.size > 0) {
+        const questionNodeId = 'questions';
+        mindMap.nodes.push({
+          id: questionNodeId,
+          name: 'Open Questions',
+          type: 'redFlags',
+          details: 'Unresolved questions'
+        });
+        mindMap.links.push({ source: 'process', target: questionNodeId });
+        
+        addSubNodes(questionNodeId, openQuestions, 'redFlags', 'question');
+      }
+      
+      // Topic discussions
+      Object.keys(discussedTopics).forEach(category => {
+        if (discussedTopics[category].size > 0) {
+          const topicNodeId = `${category}-topics`;
+          
+          // Add a topics container node
+          mindMap.nodes.push({
+            id: topicNodeId,
+            name: `${category.charAt(0).toUpperCase() + category.slice(1)} Topics`,
+            type: 'summary',
+            details: `Topics related to ${category} discussed in the meeting`
+          });
+          
+          // Connect to the correct main node
+          const categoryMap = {
+            backend: 'backend',
+            frontend: 'frontend',
+            infrastructure: 'infra',
+            process: 'process',
+            product: 'product'
+          };
+          
+          mindMap.links.push({ source: categoryMap[category], target: topicNodeId });
+          
+          // Add topic nodes
+          addSubNodes(topicNodeId, discussedTopics[category], 'summary', `${category}-topic`);
+        }
+      });
+      
+      // Engineers, Managers, Stakeholders - only if any were detected
+      if (roleInfo.engineers.size > 0 || roleInfo.managers.size > 0 || roleInfo.stakeholders.size > 0) {
+        const peopleNodeId = 'people';
+        mindMap.nodes.push({
+          id: peopleNodeId,
+          name: 'Key People',
+          type: 'users',
+          details: 'People mentioned in the meeting with their roles'
+        });
+        
+        // Connect to the main node that makes most sense
+        mindMap.links.push({ source: 'process', target: peopleNodeId });
+        
+        // Add role-specific nodes
+        if (roleInfo.engineers.size > 0) {
+          const engineersNodeId = 'engineers';
+          mindMap.nodes.push({
+            id: engineersNodeId,
+            name: 'Engineers',
+            type: 'users',
+            details: 'Engineering team members mentioned'
+          });
+          mindMap.links.push({ source: peopleNodeId, target: engineersNodeId });
+          
+          addSubNodes(engineersNodeId, roleInfo.engineers, 'users', 'engineer');
+        }
+        
+        if (roleInfo.managers.size > 0) {
+          const managersNodeId = 'managers';
+          mindMap.nodes.push({
+            id: managersNodeId,
+            name: 'Managers',
+            type: 'users',
+            details: 'Managers and leads mentioned'
+          });
+          mindMap.links.push({ source: peopleNodeId, target: managersNodeId });
+          
+          addSubNodes(managersNodeId, roleInfo.managers, 'users', 'manager');
+        }
+        
+        if (roleInfo.stakeholders.size > 0) {
+          const stakeholdersNodeId = 'stakeholders';
+          mindMap.nodes.push({
+            id: stakeholdersNodeId,
+            name: 'Stakeholders',
+            type: 'users',
+            details: 'Stakeholders and clients mentioned'
+          });
+          mindMap.links.push({ source: peopleNodeId, target: stakeholdersNodeId });
+          
+          addSubNodes(stakeholdersNodeId, roleInfo.stakeholders, 'users', 'stakeholder');
+        }
+      }
+
+      return mindMap;
+    } catch (error) {
+      console.error('Error creating enhanced mind map:', error);
+      return createDefaultMindMap();
+    }
+  };
+
+  // Enhance the executive summary with more comprehensive analysis
+  const createComprehensiveWarnings = (contextData) => {
+    if (!contextData || !contextData.context || contextData.context.length === 0) {
+      return createDefaultWarnings();
+    }
+
+    try {
+      const warnings = { redFlags: [], warnings: [] };
+      
+      // Enhanced red flags - more important issues
+      const redFlagPatterns = [
+        { 
+          regex: /deadline missed|missed deadline|behind schedule|delayed|not on time|late|falling behind/i, 
+          title: "Timeline Risk",
+          details: "Project timeline at risk due to delays or missed deadlines"
+        },
+        { 
+          regex: /budget concern|over budget|cost overrun|expensive|additional funding|financial issue/i, 
+          title: "Budget Concern",
+          details: "Project may be facing budget constraints or cost overruns"
+        },
+        { 
+          regex: /insufficient resources|lacking resources|resource constraint|understaffed|bandwidth|capacity/i, 
+          title: "Resource Constraint",
+          details: "Project team may lack necessary resources or capacity"
+        },
+        { 
+          regex: /critical bug|blocker|blocking issue|severe problem|broken|crash|outage|failure/i, 
+          title: "Critical Technical Issue",
+          details: "A severe technical problem was identified that needs immediate attention"
+        },
+        { 
+          regex: /compliance|legal|regulation|GDPR|HIPAA|CCPA|PCI|regulatory|policy violation/i, 
+          title: "Compliance Risk",
+          details: "Potential legal or regulatory compliance issues identified"
+        },
+        { 
+          regex: /security risk|vulnerability|data breach|exposure|hack|exploit|unauthorized access/i, 
+          title: "Security Risk",
+          details: "Security vulnerability or risk that requires addressing"
+        },
+        {
+          regex: /scope creep|changing requirements|moving target|unclear scope|expanding scope/i,
+          title: "Scope Management Issue",
+          details: "Project scope may be expanding beyond initial parameters"
+        },
+        {
+          regex: /stakeholder concern|client issue|customer dissatisfaction|pushback|disagreement/i,
+          title: "Stakeholder Concern",
+          details: "Issues with stakeholder or client expectations or satisfaction"
+        }
+      ];
+      
+      // Enhanced warnings - less critical issues but still important
+      const warningPatterns = [
+        { 
+          regex: /unclear requirements|requirements changed|scope change|change request|specification issue/i, 
+          title: "Requirements Clarity Issue",
+          details: "Project requirements need clarification or have changed"
+        },
+        { 
+          regex: /technical debt|refactor needed|needs cleanup|architectural issue|code quality|maintenance/i, 
+          title: "Technical Debt Concern",
+          details: "Technical debt or code quality issues that could impact future work"
+        },
+        { 
+          regex: /test coverage|missing tests|quality assurance|QA concern|manual testing|automated testing/i, 
+          title: "Testing Coverage Issue",
+          details: "Insufficient test coverage or quality assurance processes"
+        },
+        { 
+          regex: /dependency|waiting on|blocked by|external team|third party|vendor|integration/i, 
+          title: "External Dependency",
+          details: "Project progress blocked or dependent on external factors"
+        },
+        { 
+          regex: /communication issue|misunderstanding|unclear|confusion|not aligned|alignment/i, 
+          title: "Communication Issue",
+          details: "Team communication or alignment problems identified"
+        },
+        {
+          regex: /documentation|docs|missing information|need to document|knowledge transfer/i,
+          title: "Documentation Needed",
+          details: "Documentation is missing or insufficient"
+        },
+        {
+          regex: /onboarding|training|skill gap|learning curve|expertise needed/i,
+          title: "Skill or Training Gap",
+          details: "Team may need additional training or expertise"
+        },
+        {
+          regex: /risk assessment|contingency|backup plan|alternative approach|mitigation/i,
+          title: "Risk Management",
+          details: "Need for risk assessment or contingency planning"
+        }
+      ];
+
+      // Helper function to extract relevant text around a match
+      const extractRelevantText = (text, regex) => {
+        const match = regex.exec(text);
+        if (!match) return text;
+        
+        const matchIndex = match.index;
+        const contextStart = Math.max(0, matchIndex - 30);
+        const contextEnd = Math.min(text.length, matchIndex + match[0].length + 30);
+        
+        return text.substring(contextStart, contextEnd);
+      };
+
+      // Format timestamp consistently across the application
+      const formatTimestamp = (seconds) => {
+        if (seconds === undefined || seconds === null) return "unknown time";
+        
+        const minutes = Math.floor(seconds / 60);
+        const remainingSecs = Math.floor(seconds % 60);
+        return `${minutes}:${remainingSecs.toString().padStart(2, '0')}`;
+      };
+
+      // Process each frame with enhanced patterns
+      contextData.context.forEach((frame, index) => {
+        if (!frame.description) return;
+        
+        const description = frame.description;
+        const timestamp = frame.metadata?.timestamp 
+          ? formatTimestamp(frame.metadata.timestamp)
+          : new Date().toLocaleTimeString();
+          
+        // Check for red flags
+        redFlagPatterns.forEach(pattern => {
+          if (pattern.regex.test(description)) {
+            // Check if we already have this warning (avoid duplicates)
+            const existingWarning = warnings.redFlags.find(w => w.title === pattern.title);
+            if (!existingWarning) {
+              warnings.redFlags.push({
+                title: pattern.title,
+                time: timestamp,
+                details: `${pattern.details}: "${extractRelevantText(description, pattern.regex)}"`
+              });
+            }
+          }
+        });
+        
+        // Check for warnings
+        warningPatterns.forEach(pattern => {
+          if (pattern.regex.test(description)) {
+            // Check if we already have this warning (avoid duplicates)
+            const existingWarning = warnings.warnings.find(w => w.title === pattern.title);
+            if (!existingWarning) {
+              warnings.warnings.push({
+                title: pattern.title,
+                time: timestamp,
+                details: `${pattern.details}: "${extractRelevantText(description, pattern.regex)}"`
+              });
+            }
+          }
+        });
+      });
+
+      // Add summary stats to provide context
+      const totalFrames = contextData.context.length;
+      const startTime = contextData.context[0]?.metadata?.timestamp || 0;
+      const endTime = contextData.context[totalFrames-1]?.metadata?.timestamp || 0;
+      const meetingDuration = endTime - startTime;
+      
+      if (warnings.redFlags.length === 0 && warnings.warnings.length === 0) {
+        warnings.warnings.push({
+          title: "No issues detected in meeting",
+          time: new Date().toLocaleTimeString(),
+          details: `Analysis complete. No significant issues identified in the meeting (${Math.floor(meetingDuration/60)}m ${Math.floor(meetingDuration%60)}s).`
+        });
+      } else {
+        // Add a summary red flag if there are multiple issues
+        if (warnings.redFlags.length >= 3) {
+          warnings.redFlags.unshift({
+            title: "Multiple Critical Issues",
+            time: new Date().toLocaleTimeString(),
+            details: `${warnings.redFlags.length} critical issues identified in this meeting. Recommend immediate attention.`
+          });
+        }
+      }
+
+      return warnings;
+    } catch (error) {
+      console.error('Error creating comprehensive warnings:', error);
+      return createDefaultWarnings();
+    }
+  };
+
+  // Function to manually refresh the mind map and warning data
+  const handleManualRefresh = () => {
+    if (!context?.context?.length) return;
+    
+    setMindMapData(createEnhancedMindMap(context));
+    setWarningsData(createComprehensiveWarnings(context));
+    setLastContextHash(hashContext(context));
+  };
+
+  // Hash the context to detect meaningful changes
+  const hashContext = (context) => {
+    if (!context || !context.context) return '';
+    return context.context.map(frame => frame.frame_index).join(',');
+  };
+
+  // Update data only when meaningful changes occur, with throttling
+  useEffect(() => {
+    if (!context?.context?.length) {
+      setMindMapData(createDefaultMindMap());
+      setWarningsData(createDefaultWarnings());
+      return;
+    }
+
+    // Only auto-update if manual refresh is not enabled
+    if (manualRefreshEnabled) return;
+    
+    const currentHash = hashContext(context);
+    
+    // Skip update if context hasn't meaningfully changed
+    if (currentHash === lastContextHash) return;
+    
+    // Clear any pending timeout
+    if (updateTimeout) {
+      clearTimeout(updateTimeout);
+    }
+    
+    // Set a new timeout for updates (throttle to once per second)
+    const timeoutId = setTimeout(() => {
+      setMindMapData(createEnhancedMindMap(context));
+      setWarningsData(createComprehensiveWarnings(context));
+      setLastContextHash(currentHash);
+    }, 1000);
+    
+    setUpdateTimeout(timeoutId);
+    
+    return () => {
+      if (updateTimeout) {
+        clearTimeout(updateTimeout);
+      }
+    };
+  }, [context, lastContextHash, manualRefreshEnabled]);
+
+  // Initial data load
+  useEffect(() => {
+    if (context?.context?.length > 0 && !mindMapData) {
+      handleManualRefresh();
+    }
+  }, [context]);
+
   if (loading) {
     return (
       <Box 
@@ -886,55 +1717,78 @@ function App() {
   }
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ my: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          Perspectiv Screen Understanding Demo
-        </Typography>
-        
-        <VideoUploadControls 
-          onDataCleared={handleDataCleared}
-        />
-        
-        {loading ? (
-          <CircularProgress />
-        ) : error ? (
-          <Typography color="error">{error}</Typography>
-        ) : (
-          <>
-            <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
-                <Paper sx={{ p: 2, height: '100%' }}>
-                  <Typography variant="h6">Frame Information</Typography>
-                  <Typography>Total Frames: {totalFrames}</Typography>
-                  {context?.buffer_stats && (
-                    <>
-                      <BufferHealthIndicator health={context.buffer_stats.buffer_health} maxFrames={totalFrames} currentFrames={context.buffer_stats.frames_in_buffer} />
-                      <BufferStats stats={context.buffer_stats} />
-                    </>
-                  )}
-                </Paper>
-              </Grid>
-              
-              <Grid item xs={12} md={8}>
-                <Paper sx={{ p: 2, maxHeight: 600, overflow: 'auto' }}>
-                  <Typography variant="h6">Context Timeline</Typography>
-                  {contextError ? (
-                    <Typography color="error">{contextError}</Typography>
-                  ) : (
-                    <ContextTimeline context={context} />
-                  )}
-                </Paper>
-              </Grid>
-            </Grid>
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Grid container spacing={3}>
+        {/* Analysis Overview Section */}
+        <Grid item xs={12}>
+          <WarningsSection 
+            warnings={warningsData.warnings}
+            redFlags={warningsData.redFlags}
+          />
+        </Grid>
+
+        {/* Existing UI Components */}
+        <Grid item xs={12}>
+          <Paper sx={{ p: 3 }}>
+            <Typography variant="h4" component="h1" gutterBottom>
+              Perspectiv Screen Understanding Demo
+            </Typography>
             
-            <ChatInterface 
-              context={context}
-              currentFrame={currentFrame}
+            <VideoUploadControls 
+              onDataCleared={handleDataCleared}
             />
-          </>
-        )}
-      </Box>
+            
+            {loading ? (
+              <CircularProgress />
+            ) : error ? (
+              <Typography color="error">{error}</Typography>
+            ) : (
+              <>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={4}>
+                    <Paper sx={{ p: 2, height: '100%' }}>
+                      <Typography variant="h6">Frame Information</Typography>
+                      <Typography>Total Frames: {totalFrames}</Typography>
+                      {context?.buffer_stats && (
+                        <>
+                          <BufferHealthIndicator health={context.buffer_stats.buffer_health} maxFrames={totalFrames} currentFrames={context.buffer_stats.frames_in_buffer} />
+                          <BufferStats stats={context.buffer_stats} />
+                        </>
+                      )}
+                    </Paper>
+                  </Grid>
+                  
+                  <Grid item xs={12} md={8}>
+                    <Paper sx={{ p: 2, maxHeight: 600, overflow: 'auto' }}>
+                      <Typography variant="h6">Context Timeline</Typography>
+                      {contextError ? (
+                        <Typography color="error">{contextError}</Typography>
+                      ) : (
+                        <ContextTimeline context={context} />
+                      )}
+                    </Paper>
+                  </Grid>
+                </Grid>
+                
+                <ChatInterface 
+                  context={context}
+                  currentFrame={currentFrame}
+                />
+
+                {/* Mind Map Visualization moved below chat interface */}
+                {mindMapData && (
+                  <Box sx={{ mt: 3 }}>
+                    <MindMap 
+                      data={mindMapData} 
+                      onRefresh={handleManualRefresh}
+                    />
+                  </Box>
+                )}
+              </>
+            )}
+          </Paper>
+        </Grid>
+      </Grid>
     </Container>
   );
 }
