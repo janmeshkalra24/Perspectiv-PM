@@ -74,7 +74,64 @@ class ScreenUnderstanding:
                 
                 # Process frame
                 try:
+                    # First get general description
                     result = await self.model.process_image(frame_data["image_data"])
+                    
+                    # Then extract PM-specific insights with structured prompts
+                    pm_insights = await self.model.answer_question(
+                        """Analyze this frame from a product management perspective. Provide ONLY the most critical insights in a concise format.
+
+STRICT RULES:
+1. Each item MUST be 100 characters or less
+2. Each category MUST have at most 3 items
+3. Use bullet points only for actual items
+4. Skip any category that has no relevant items
+5. NO explanatory text or filler words
+
+Return ONLY this JSON format:
+{
+    "sprint_goals": [
+        "Implement user auth by EOW",
+        "Complete API docs"
+    ],
+    "key_metrics": [
+        "API response time < 200ms",
+        "Test coverage > 85%"
+    ],
+    "feature_status": [
+        "Auth: 80% done, pending security review",
+        "API docs: 20% complete"
+    ],
+    "dependencies": [
+        "Auth service needs updated identity provider",
+        "Mobile app blocked on API"
+    ],
+    "risks": [
+        "Security review may delay auth release",
+        "Limited backend capacity"
+    ],
+    "next_steps": [
+        "Schedule security review",
+        "Start API documentation"
+    ],
+    "decisions": [
+        "Using OAuth2 for auth flow",
+        "Postponing analytics to next sprint"
+    ],
+    "stakeholder_requests": [
+        "Marketing needs user flows by Friday",
+        "Support team requests better error messages"
+    ]
+}""",
+                        {"image_data": frame_data["image_data"]}
+                    )
+                    
+                    # Add PM insights to result
+                    try:
+                        result["pm_insights"] = pm_insights
+                    except:
+                        logger.warning(f"Could not parse PM insights for frame {frame_index}")
+                        result["pm_insights"] = {}
                     
                     logger.info(f"Model returned result for frame {frame_index}: {result.get('description', '')[:100]}...")
                     

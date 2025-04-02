@@ -11,11 +11,13 @@ import RestoreIcon from '@mui/icons-material/Restore';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 
 const Container = styled.div`
-  padding: 20px;
-  background: #1e2130;
-  border-radius: 8px;
-  margin-bottom: 20px;
+  padding: 24px;
+  background: linear-gradient(145deg, #1a1d2e, #1e2235);
+  border-radius: 16px;
+  margin-bottom: 24px;
   position: relative;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 `;
 
 const SectionTitle = styled.h2`
@@ -33,19 +35,27 @@ const ButtonGroup = styled.div`
 `;
 
 const Button = styled.button`
-  background: #4c4f5a;
-  color: white;
+  background: linear-gradient(145deg, #2a2d3e, #2e3245);
+  color: #fff;
   border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
+  padding: 10px 18px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   
   &:hover {
-    background: #5a5d6a;
+    background: linear-gradient(145deg, #2e3245, #2a2d3e);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  &:active {
+    transform: translateY(0);
   }
 
   &:disabled {
@@ -68,19 +78,27 @@ const ZoomControls = styled.div`
 `;
 
 const ZoomButton = styled.button`
-  background: #4c4f5a;
+  background: linear-gradient(145deg, #2a2d3e, #2e3245);
   color: white;
   border: none;
-  width: 40px;
-  height: 40px;
-  border-radius: 4px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   
   &:hover {
-    background: #5a5d6a;
+    background: linear-gradient(145deg, #2e3245, #2a2d3e);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  &:active {
+    transform: translateY(0);
   }
 `;
 
@@ -364,6 +382,129 @@ const MindMap = ({ data: initialData, onRefresh }) => {
   const createVisualization = (visualData = data) => {
     if (!visualData || !svgRef.current) return;
 
+    // Add utility functions for text processing
+    function cleanMarkdown(text) {
+      if (!text) return '';
+      return text
+        // Remove markdown bold syntax
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        // Remove markdown italic syntax
+        .replace(/\*(.*?)\*/g, '$1')
+        // Remove markdown code blocks
+        .replace(/```[\s\S]*?```/g, '')
+        // Remove markdown inline code
+        .replace(/`([^`]+)`/g, '$1')
+        // Remove markdown links
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        // Remove markdown headers
+        .replace(/#{1,6}\s+/g, '')
+        // Remove bullet points
+        .replace(/^\s*[-*+]\s+/gm, '')
+        // Remove numbered lists
+        .replace(/^\s*\d+\.\s+/gm, '')
+        // Remove excessive whitespace
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function formatNodeTitle(node) {
+      if (!node.name || !node.details) {
+        return truncateText(node.name, 20);
+      }
+
+      let title = '';
+      // Special formatting based on node type
+      switch (node.type) {
+        case 'tasks':
+          const actionMatch = node.details.match(/(?:need to|should|must|will)\s+([^,.!?]+)/i);
+          title = actionMatch ? actionMatch[1] : node.name;
+          break;
+        
+        case 'redFlags':
+          const riskMatch = node.details.match(/risk[s]?\s*[:]\s*([^,.!?]+)/i) ||
+                          node.details.match(/blocker[s]?\s*[:]\s*([^,.!?]+)/i);
+          title = riskMatch ? riskMatch[1] : node.name;
+          break;
+        
+        case 'terms':
+          const termMatch = node.details.match(/([^:]+):/);
+          title = termMatch ? termMatch[1] : node.name;
+          break;
+        
+        case 'summary':
+          const summaryMatch = node.details.match(/(?:decided|agreed|concluded|determined)\s+([^,.!?]+)/i) ||
+                             node.details.match(/([^,.!?]+(?:improves|enhances|enables|provides|supports)[^,.!?]+)/i);
+          title = summaryMatch ? summaryMatch[1] : node.name;
+          break;
+          
+        default:
+          title = node.name;
+      }
+      
+      return truncateText(cleanMarkdown(title), 20);
+    }
+
+    // Helper function to truncate text at word boundary
+    function truncateText(text, maxLength = 25) {
+      if (!text) return '';
+      const cleaned = cleanMarkdown(text)
+        // Remove any LLM prefixes like "Here is a detailed analysis..."
+        .replace(/^(?:here is|here's|this is|i have|i've|i will|i'll|let me|let's)[^:]*:\s*/i, '')
+        .trim();
+      
+      if (cleaned.length <= maxLength) return cleaned;
+      
+      // Try to find a good breakpoint near the maxLength
+      const breakPoints = cleaned.substring(0, maxLength).split(/[\s,.;:-]/);
+      breakPoints.pop(); // Remove last partial word/segment
+      const truncated = breakPoints.join(' ').trim();
+      
+      return truncated.length > 0 ? truncated + '...' : cleaned.substring(0, maxLength - 3) + '...';
+    }
+
+    function formatNodeContent(content) {
+      if (!content) return '';
+      const parts = content.split('\n\n');
+      // Take the first meaningful chunk of content
+      const firstPart = parts.find(part => 
+        part.length > 10 && !part.match(/^[#\s-*]/));
+      return cleanMarkdown(firstPart || parts[0]);
+    }
+
+    function formatTooltipContent(content) {
+      if (!content) return '';
+      
+      // Pre-process content to improve formatting
+      let processedContent = content
+        // Remove redundant "Context:" headers from LLM output
+        .replace(/^Context:\s*/i, '')
+        // Remove redundant "Details:" headers from LLM output
+        .replace(/^Details:\s*/i, '')
+        // Convert timestamp patterns to more readable format
+        .replace(/\((\d+):(\d+)\)/g, '(at $1m $2s)')
+        // Add spacing after bullet points for better readability
+        .replace(/•/g, '• ');
+
+      return processedContent
+        // Style headers
+        .replace(/#{1,6}\s+(.*)/g, '<strong style="display: block; margin-top: 8px; margin-bottom: 4px; color: #4CAF50;">$1</strong>')
+        // Style bold text
+        .replace(/\*\*(.*?)\*\*/g, '<strong style="color: #90caf9">$1</strong>')
+        // Style italic text
+        .replace(/\*(.*?)\*/g, '<em style="color: #b39ddb">$1</em>')
+        // Convert bullet points to styled list items
+        .replace(/(?:^|\n)[\s]*[-*+][\s]+(.*)/g, '<div style="margin: 4px 0; padding-left: 8px; border-left: 2px solid #4CAF50;">• $1</div>')
+        // Style code blocks
+        .replace(/```([\s\S]*?)```/g, '<pre style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace;">$1</pre>')
+        // Style inline code
+        .replace(/`([^`]+)`/g, '<code style="background: rgba(0,0,0,0.2); padding: 2px 4px; border-radius: 2px; font-family: monospace;">$1</code>')
+        // Convert newlines to styled paragraphs
+        .replace(/\n\n/g, '</p><p style="margin: 8px 0;">')
+        .replace(/\n/g, '<br>')
+        // Wrap in paragraph tags
+        .replace(/^(.+)$/, '<p style="margin: 8px 0;">$1</p>');
+    }
+
     const width = 800;
     const height = 600;
     const containerWidth = svgRef.current.parentElement.clientWidth;
@@ -394,20 +535,67 @@ const MindMap = ({ data: initialData, onRefresh }) => {
 
     // Create force simulation with current settings
     const simulation = d3.forceSimulation(visualData.nodes)
-      .force("link", d3.forceLink(visualData.links).id(d => d.id).distance(layoutSettings.linkDistance))
-      .force("charge", d3.forceManyBody().strength(layoutSettings.forceStrength))
+      .force("link", d3.forceLink(visualData.links).id(d => d.id).distance(d => {
+        // Shorter distances for PM-specific nodes to keep them closer
+        if (d.source.id.startsWith('sprint-') || d.target.id.startsWith('sprint-')) return 60;
+        if (d.source.id.startsWith('goal-') || d.target.id.startsWith('goal-')) return 70;
+        return layoutSettings.linkDistance * 0.7; // Reduce default distance by 30%
+      }))
+      .force("charge", d3.forceManyBody()
+        .strength(d => d.type === 'app' ? layoutSettings.forceStrength * 1.5 : layoutSettings.forceStrength))
       .force("center", d3.forceCenter(containerWidth / 2, containerHeight / 2).strength(layoutSettings.centeringForce))
-      // Add collision detection to prevent node overlap
-      .force("collision", d3.forceCollide().radius(d => d.type === 'app' ? 40 : 30));
+      .force("collision", d3.forceCollide().radius(d => d.type === 'app' ? 45 : 35))
+      // Add X and Y forces to prevent nodes from going too far from center
+      .force("x", d3.forceX(containerWidth / 2).strength(0.05))
+      .force("y", d3.forceY(containerHeight / 2).strength(0.05));
 
-    // Create links
+    // Create gradient definitions
+    const defs = svg.append("defs");
+    
+    // Define gradients for each node type
+    const gradients = {
+      app: ["#7c4dff", "#651fff"],
+      summary: ["#00e676", "#00c853"],
+      users: ["#00b0ff", "#0091ea"],
+      redFlags: ["#ff5252", "#ff1744"],
+      tasks: ["#ffab40", "#ff9100"],
+      terms: ["#e040fb", "#d500f9"],
+      default: ["#78909c", "#546e7a"]
+    };
+    
+    Object.entries(gradients).forEach(([type, [color1, color2]]) => {
+      const gradient = defs.append("radialGradient")
+        .attr("id", `gradient-${type}`)
+        .attr("cx", "30%")
+        .attr("cy", "30%")
+        .attr("r", "70%");
+        
+      gradient.append("stop")
+        .attr("offset", "0%")
+        .attr("style", `stop-color: ${color1}; stop-opacity: 1`);
+        
+      gradient.append("stop")
+        .attr("offset", "100%")
+        .attr("style", `stop-color: ${color2}; stop-opacity: 1`);
+    });
+
+    // Create links with improved styling
     const links = g.append("g")
       .selectAll("line")
       .data(visualData.links)
       .enter()
       .append("line")
-      .attr("stroke", "#4a4a4a")
-      .attr("stroke-width", 2);
+      .attr("stroke", d => {
+        if (d.source.id.startsWith('sprint-') || d.target.id.startsWith('sprint-')) return "#4CAF50";
+        if (d.source.id.startsWith('risk-') || d.target.id.startsWith('risk-')) return "#f44336";
+        return "#4a4a4a";
+      })
+      .attr("stroke-width", d => {
+        if (d.source.id.startsWith('sprint-') || d.target.id.startsWith('sprint-')) return 2.5;
+        if (d.source.type === 'app' || d.target.type === 'app') return 2;
+        return 1.5;
+      })
+      .attr("stroke-opacity", 0.6);
 
     // Create nodes
     const nodes = g.append("g")
@@ -420,46 +608,186 @@ const MindMap = ({ data: initialData, onRefresh }) => {
         .on("drag", dragged)
         .on("end", dragended));
 
-    // Add circles to nodes
+    // Add circles to nodes with enhanced styling
     nodes.append("circle")
-      .attr("r", d => d.type === 'app' ? 30 : 20)
-      .attr("fill", d => {
+      .attr("r", d => {
         switch(d.type) {
-          case 'app': return '#7c5cff';
-          case 'summary': return '#4CAF50';
-          case 'users': return '#2196F3';
-          case 'redFlags': return '#f44336';
-          case 'tasks': return '#FF9800';
-          case 'terms': return '#9C27B0';
-          default: return '#78909C';
+          case 'app': return 38;
+          case 'summary': return 32;
+          case 'tasks': return 28;
+          case 'redFlags': return 28;
+          case 'users': return 28;
+          case 'terms': return 25;
+          default: return 25;
         }
-      });
+      })
+      .attr("fill", d => `url(#gradient-${d.type || 'default'})`)
+      .attr("stroke", d => {
+        if (d.id.startsWith('sprint-') || d.id.startsWith('goal-')) return "#81c784";
+        if (d.id.startsWith('risk-') || d.id.startsWith('dep-')) return "#e57373";
+        if (d.type === 'app') return "#b39ddb";
+        return "rgba(255,255,255,0.1)";
+      })
+      .attr("stroke-width", d => {
+        if (d.id.startsWith('sprint-') || d.id.startsWith('goal-')) return 2;
+        if (d.type === 'app') return 2;
+        return 1;
+      })
+      .style("filter", "drop-shadow(0 4px 6px rgba(0,0,0,0.1))")
+      .style("transition", "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)");
 
-    // Helper function to truncate text
-    function truncateText(text, maxLength = 15) {
-      if (!text) return '';
-      return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
-    }
-
-    // Add labels to nodes
+    // Add labels to nodes with improved styling
     nodes.append("text")
-      .text(d => truncateText(d.name))
+      .text(d => formatNodeTitle(d))
       .attr("text-anchor", "middle")
-      .attr("dy", 30)
+      .attr("dy", d => {
+        switch(d.type) {
+          case 'app': return 38;
+          case 'summary': return 34;
+          default: return 32;
+        }
+      })
       .attr("fill", "white")
-      .style("font-size", "12px")
-      .style("pointer-events", "none"); // Make text not block clicks
+      .style("font-size", d => {
+        if (d.id.startsWith('sprint-') || 
+            d.id === 'feature-status' ||
+            d.id === 'dependencies-constraints' ||
+            d.id === 'risks-resources' ||
+            d.id === 'stakeholder-requests') {
+          return "15px";
+        }
+        return "13px";
+      })
+      .style("font-weight", d => {
+        if (d.id.startsWith('sprint-') || 
+            d.id === 'feature-status' ||
+            d.id === 'dependencies-constraints' ||
+            d.id === 'risks-resources' ||
+            d.id === 'stakeholder-requests') {
+          return "600";
+        }
+        return "400";
+      })
+      .style("letter-spacing", "0.02em")
+      .style("text-shadow", "0 2px 4px rgba(0,0,0,0.2)")
+      .style("pointer-events", "none");
 
-    // Add small indicator for nodes with details
+    // Add icons/indicators for nodes with details
     nodes.filter(d => d.details)
       .append("text")
-      .text("ⓘ")
+      .text(d => {
+        // Use different icons based on node type
+        if (d.id.startsWith('risk-')) return "⚠";
+        if (d.id.startsWith('goal-')) return "🎯";
+        if (d.id.startsWith('metric-')) return "📊";
+        if (d.id.startsWith('feature-')) return "✨";
+        if (d.id.startsWith('dep-')) return "🔄";
+        if (d.id.startsWith('constraint-')) return "⛔";
+        if (d.id.startsWith('resource-')) return "📋";
+        if (d.id.startsWith('request-')) return "💬";
+        return "ⓘ";
+      })
       .attr("text-anchor", "middle")
       .attr("dy", -15)
       .attr("fill", "white")
-      .attr("opacity", 0.7)
-      .style("font-size", "10px")
+      .attr("opacity", 0.9)
+      .style("font-size", "12px")
       .style("pointer-events", "none");
+
+    // Add hover effects with smoother transitions
+    nodes.on("mouseover", function(event, d) {
+      // Highlight connected nodes and links with smooth transition
+      nodes.transition().duration(200)
+        .style("opacity", n => {
+          const isConnected = visualData.links.some(link => 
+            (link.source.id === d.id && link.target.id === n.id) ||
+            (link.target.id === d.id && link.source.id === n.id)
+          );
+          return isConnected || n.id === d.id ? 1 : 0.2;
+        });
+        
+      links.transition().duration(200)
+        .style("opacity", l => 
+          l.source.id === d.id || l.target.id === d.id ? 1 : 0.1
+        )
+        .attr("stroke-width", l => {
+          const baseWidth = l.source.id.startsWith('sprint-') || l.target.id.startsWith('sprint-') ? 2.5 :
+                           l.source.type === 'app' || l.target.type === 'app' ? 2 : 1.5;
+          return (l.source.id === d.id || l.target.id === d.id) ? baseWidth * 1.5 : baseWidth;
+        });
+
+      // Scale up the hovered node slightly
+      d3.select(this).select("circle")
+        .transition()
+        .duration(200)
+        .attr("r", d => {
+          const baseRadius = d.type === 'app' ? 35 :
+                           d.type === 'summary' ? 30 :
+                           d.type === 'tasks' || d.type === 'redFlags' || d.type === 'users' ? 25 :
+                           d.type === 'terms' ? 22 : 22;
+          return baseRadius * 1.1;
+        });
+
+      // Show tooltip with enhanced styling
+      if (d.details) {
+        const tooltip = d3.select("body").append("div")
+          .attr("class", "mindmap-tooltip")
+          .style("position", "absolute")
+          .style("background", "rgba(26, 29, 46, 0.98)")
+          .style("color", "white")
+          .style("padding", "16px")
+          .style("border-radius", "12px")
+          .style("font-size", "13px")
+          .style("max-width", "320px")
+          .style("pointer-events", "none")
+          .style("z-index", 1000)
+          .style("line-height", "1.5")
+          .style("box-shadow", "0 8px 32px rgba(0,0,0,0.24)")
+          .style("border", "1px solid rgba(255,255,255,0.08)")
+          .style("backdrop-filter", "blur(12px)")
+          .style("opacity", 0)
+          .style("transform", "translateY(10px)");
+        
+        tooltip.html(formatTooltipContent(d.details))
+          .style("left", (event.pageX + 10) + "px")
+          .style("top", (event.pageY - 10) + "px")
+          .transition()
+          .duration(200)
+          .style("opacity", 1)
+          .style("transform", "translateY(0)");
+      }
+    })
+    .on("mouseout", function(event, d) {
+      // Reset highlights with smooth transition
+      nodes.transition().duration(200)
+        .style("opacity", 1);
+      
+      links.transition().duration(200)
+        .style("opacity", 0.6)
+        .attr("stroke-width", l => 
+          l.source.id.startsWith('sprint-') || l.target.id.startsWith('sprint-') ? 2.5 :
+          l.source.type === 'app' || l.target.type === 'app' ? 2 : 1.5
+        );
+
+      // Scale down the node
+      d3.select(this).select("circle")
+        .transition()
+        .duration(200)
+        .attr("r", d => {
+          return d.type === 'app' ? 35 :
+                 d.type === 'summary' ? 30 :
+                 d.type === 'tasks' || d.type === 'redFlags' || d.type === 'users' ? 25 :
+                 d.type === 'terms' ? 22 : 22;
+        });
+      
+      // Remove tooltip with fade out
+      d3.selectAll(".mindmap-tooltip")
+        .transition()
+        .duration(200)
+        .style("opacity", 0)
+        .style("transform", "translateY(10px)")
+        .remove();
+    });
 
     // Add click handler for nodes
     nodes.on("click", (event, d) => {

@@ -8,8 +8,8 @@ import SendIcon from '@mui/icons-material/Send';
 import MicIcon from '@mui/icons-material/Mic';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import StopIcon from '@mui/icons-material/Stop';
-import WarningsSection from './components/WarningsSection';
 import MindMap from './components/MindMap';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -662,9 +662,9 @@ function ChatInterface({ context, currentFrame }) {
 
   return (
     <Paper sx={{ p: 2, mt: 3 }}>
-      <Typography variant="h6" gutterBottom>
-        Chat Interface
-      </Typography>
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="h6">Chat Interface</Typography>
+      </Box>
       <Box
         ref={chatContainerRef}
         sx={{
@@ -750,9 +750,6 @@ function App() {
   const [contextError, setContextError] = useState(null);
   const [currentFrame, setCurrentFrame] = useState(null);
   const [mindMapData, setMindMapData] = useState(null);
-  const [warningsData, setWarningsData] = useState({ warnings: [], redFlags: [] });
-
-  // Add memoization and throttling to prevent excessive updates
   const [lastContextHash, setLastContextHash] = useState('');
   const [updateTimeout, setUpdateTimeout] = useState(null);
   const [manualRefreshEnabled, setManualRefreshEnabled] = useState(true);
@@ -1193,20 +1190,24 @@ function App() {
           if (typeof item === 'string') {
             // Remove timestamp if present at the end in parentheses
             const withoutTimestamp = item.split(' (')[0];
-            // Take first 20 chars or up to first punctuation that might separate ideas
-            const firstPunctuation = withoutTimestamp.search(/[,;:]/);
-            if (firstPunctuation > 0 && firstPunctuation < 20) {
-              conciseName = withoutTimestamp.substring(0, firstPunctuation);
+            // Remove any LLM prefixes
+            const withoutPrefix = withoutTimestamp
+              .replace(/^(?:here is|here's|this is|i have|i've|i will|i'll|let me|let's)[^:]*:\s*/i, '')
+              .trim();
+            // Take first 25 chars or up to first punctuation that might separate ideas
+            const firstPunctuation = withoutPrefix.search(/[,;:]/);
+            if (firstPunctuation > 0 && firstPunctuation < 25) {
+              conciseName = withoutPrefix.substring(0, firstPunctuation);
             } else {
-              conciseName = withoutTimestamp.substring(0, Math.min(20, withoutTimestamp.length));
+              conciseName = withoutPrefix.substring(0, Math.min(25, withoutPrefix.length));
             }
             
             // Add ellipsis if truncated
-            if (conciseName.length < withoutTimestamp.length) {
+            if (conciseName.length < withoutPrefix.length) {
               conciseName += '...';
             }
           } else {
-            conciseName = item;
+            conciseName = String(item).substring(0, 25);
           }
           
           mindMap.nodes.push({
@@ -1439,6 +1440,232 @@ function App() {
         }
       }
 
+      // Add PM insights from the latest frame
+      const latestFrame = contextData.context[contextData.context.length - 1];
+      if (latestFrame && latestFrame.pm_insights) {
+        const pmInsights = latestFrame.pm_insights;
+        
+        // Sprint Goals & Metrics
+        if (pmInsights.sprint_goals?.length > 0 || pmInsights.key_metrics?.length > 0) {
+          const goalsNodeId = 'sprint-goals-metrics';
+          mindMap.nodes.push({
+            id: goalsNodeId,
+            name: 'Sprint Goals & Metrics',
+            type: 'summary',
+            details: 'Current sprint objectives and key metrics'
+          });
+          mindMap.links.push({ source: 'process', target: goalsNodeId });
+          
+          // Add sprint goals
+          if (pmInsights.sprint_goals?.length > 0) {
+            const sprintGoalsId = 'sprint-goals';
+            mindMap.nodes.push({
+              id: sprintGoalsId,
+              name: 'Sprint Goals',
+              type: 'tasks',
+              details: 'Objectives for the current sprint'
+            });
+            mindMap.links.push({ source: goalsNodeId, target: sprintGoalsId });
+            
+            pmInsights.sprint_goals.forEach((goal, idx) => {
+              const id = `goal-${idCounter++}`;
+              mindMap.nodes.push({
+                id,
+                name: `Goal ${idx + 1}`,
+                type: 'tasks',
+                details: goal
+              });
+              mindMap.links.push({ source: sprintGoalsId, target: id });
+            });
+          }
+          
+          // Add metrics
+          if (pmInsights.key_metrics?.length > 0) {
+            const metricsId = 'key-metrics';
+            mindMap.nodes.push({
+              id: metricsId,
+              name: 'Key Metrics',
+              type: 'summary',
+              details: 'Important metrics and KPIs'
+            });
+            mindMap.links.push({ source: goalsNodeId, target: metricsId });
+            
+            pmInsights.key_metrics.forEach((metric, idx) => {
+              const id = `metric-${idCounter++}`;
+              mindMap.nodes.push({
+                id,
+                name: `Metric ${idx + 1}`,
+                type: 'summary',
+                details: metric
+              });
+              mindMap.links.push({ source: metricsId, target: id });
+            });
+          }
+        }
+        
+        // Feature Status
+        if (pmInsights.feature_status?.length > 0) {
+          const featureStatusId = 'feature-status';
+          mindMap.nodes.push({
+            id: featureStatusId,
+            name: 'Feature Status',
+            type: 'summary',
+            details: 'Current status of features in development'
+          });
+          mindMap.links.push({ source: 'process', target: featureStatusId });
+          
+          pmInsights.feature_status.forEach((feature, idx) => {
+            const id = `feature-${idCounter++}`;
+            mindMap.nodes.push({
+              id,
+              name: `Feature ${idx + 1}`,
+              type: 'summary',
+              details: feature
+            });
+            mindMap.links.push({ source: featureStatusId, target: id });
+          });
+        }
+        
+        // Dependencies & Technical Constraints
+        if (pmInsights.dependencies?.length > 0 || pmInsights.technical_constraints?.length > 0) {
+          const constraintsNodeId = 'dependencies-constraints';
+          mindMap.nodes.push({
+            id: constraintsNodeId,
+            name: 'Dependencies & Constraints',
+            type: 'redFlags',
+            details: 'Technical dependencies and limitations'
+          });
+          mindMap.links.push({ source: 'process', target: constraintsNodeId });
+          
+          // Add dependencies
+          if (pmInsights.dependencies?.length > 0) {
+            const dependenciesId = 'dependencies';
+            mindMap.nodes.push({
+              id: dependenciesId,
+              name: 'Dependencies',
+              type: 'redFlags',
+              details: 'Cross-team and system dependencies'
+            });
+            mindMap.links.push({ source: constraintsNodeId, target: dependenciesId });
+            
+            pmInsights.dependencies.forEach((dep, idx) => {
+              const id = `dep-${idCounter++}`;
+              mindMap.nodes.push({
+                id,
+                name: `Dependency ${idx + 1}`,
+                type: 'redFlags',
+                details: dep
+              });
+              mindMap.links.push({ source: dependenciesId, target: id });
+            });
+          }
+          
+          // Add technical constraints
+          if (pmInsights.technical_constraints?.length > 0) {
+            const constraintsId = 'tech-constraints';
+            mindMap.nodes.push({
+              id: constraintsId,
+              name: 'Technical Constraints',
+              type: 'redFlags',
+              details: 'Technical limitations and constraints'
+            });
+            mindMap.links.push({ source: constraintsNodeId, target: constraintsId });
+            
+            pmInsights.technical_constraints.forEach((constraint, idx) => {
+              const id = `constraint-${idCounter++}`;
+              mindMap.nodes.push({
+                id,
+                name: `Constraint ${idx + 1}`,
+                type: 'redFlags',
+                details: constraint
+              });
+              mindMap.links.push({ source: constraintsId, target: id });
+            });
+          }
+        }
+        
+        // Risks & Resource Needs
+        if (pmInsights.risks?.length > 0 || pmInsights.resource_needs?.length > 0) {
+          const risksNodeId = 'risks-resources';
+          mindMap.nodes.push({
+            id: risksNodeId,
+            name: 'Risks & Resources',
+            type: 'redFlags',
+            details: 'Project risks and resource requirements'
+          });
+          mindMap.links.push({ source: 'process', target: risksNodeId });
+          
+          // Add risks
+          if (pmInsights.risks?.length > 0) {
+            const risksId = 'risks';
+            mindMap.nodes.push({
+              id: risksId,
+              name: 'Risks',
+              type: 'redFlags',
+              details: 'Potential risks and concerns'
+            });
+            mindMap.links.push({ source: risksNodeId, target: risksId });
+            
+            pmInsights.risks.forEach((risk, idx) => {
+              const id = `risk-${idCounter++}`;
+              mindMap.nodes.push({
+                id,
+                name: `Risk ${idx + 1}`,
+                type: 'redFlags',
+                details: risk
+              });
+              mindMap.links.push({ source: risksId, target: id });
+            });
+          }
+          
+          // Add resource needs
+          if (pmInsights.resource_needs?.length > 0) {
+            const resourcesId = 'resources';
+            mindMap.nodes.push({
+              id: resourcesId,
+              name: 'Resource Needs',
+              type: 'tasks',
+              details: 'Required resources and constraints'
+            });
+            mindMap.links.push({ source: risksNodeId, target: resourcesId });
+            
+            pmInsights.resource_needs.forEach((need, idx) => {
+              const id = `resource-${idCounter++}`;
+              mindMap.nodes.push({
+                id,
+                name: `Need ${idx + 1}`,
+                type: 'tasks',
+                details: need
+              });
+              mindMap.links.push({ source: resourcesId, target: id });
+            });
+          }
+        }
+        
+        // Stakeholder Requests
+        if (pmInsights.stakeholder_requests?.length > 0) {
+          const stakeholderId = 'stakeholder-requests';
+          mindMap.nodes.push({
+            id: stakeholderId,
+            name: 'Stakeholder Requests',
+            type: 'users',
+            details: 'Requirements and requests from stakeholders'
+          });
+          mindMap.links.push({ source: 'process', target: stakeholderId });
+          
+          pmInsights.stakeholder_requests.forEach((request, idx) => {
+            const id = `request-${idCounter++}`;
+            mindMap.nodes.push({
+              id,
+              name: `Request ${idx + 1}`,
+              type: 'users',
+              details: request
+            });
+            mindMap.links.push({ source: stakeholderId, target: id });
+          });
+        }
+      }
+
       return mindMap;
     } catch (error) {
       console.error('Error creating enhanced mind map:', error);
@@ -1455,94 +1682,6 @@ function App() {
     try {
       const warnings = { redFlags: [], warnings: [] };
       
-      // Enhanced red flags - more important issues
-      const redFlagPatterns = [
-        { 
-          regex: /deadline missed|missed deadline|behind schedule|delayed|not on time|late|falling behind/i, 
-          title: "Timeline Risk",
-          details: "Project timeline at risk due to delays or missed deadlines"
-        },
-        { 
-          regex: /budget concern|over budget|cost overrun|expensive|additional funding|financial issue/i, 
-          title: "Budget Concern",
-          details: "Project may be facing budget constraints or cost overruns"
-        },
-        { 
-          regex: /insufficient resources|lacking resources|resource constraint|understaffed|bandwidth|capacity/i, 
-          title: "Resource Constraint",
-          details: "Project team may lack necessary resources or capacity"
-        },
-        { 
-          regex: /critical bug|blocker|blocking issue|severe problem|broken|crash|outage|failure/i, 
-          title: "Critical Technical Issue",
-          details: "A severe technical problem was identified that needs immediate attention"
-        },
-        { 
-          regex: /compliance|legal|regulation|GDPR|HIPAA|CCPA|PCI|regulatory|policy violation/i, 
-          title: "Compliance Risk",
-          details: "Potential legal or regulatory compliance issues identified"
-        },
-        { 
-          regex: /security risk|vulnerability|data breach|exposure|hack|exploit|unauthorized access/i, 
-          title: "Security Risk",
-          details: "Security vulnerability or risk that requires addressing"
-        },
-        {
-          regex: /scope creep|changing requirements|moving target|unclear scope|expanding scope/i,
-          title: "Scope Management Issue",
-          details: "Project scope may be expanding beyond initial parameters"
-        },
-        {
-          regex: /stakeholder concern|client issue|customer dissatisfaction|pushback|disagreement/i,
-          title: "Stakeholder Concern",
-          details: "Issues with stakeholder or client expectations or satisfaction"
-        }
-      ];
-      
-      // Enhanced warnings - less critical issues but still important
-      const warningPatterns = [
-        { 
-          regex: /unclear requirements|requirements changed|scope change|change request|specification issue/i, 
-          title: "Requirements Clarity Issue",
-          details: "Project requirements need clarification or have changed"
-        },
-        { 
-          regex: /technical debt|refactor needed|needs cleanup|architectural issue|code quality|maintenance/i, 
-          title: "Technical Debt Concern",
-          details: "Technical debt or code quality issues that could impact future work"
-        },
-        { 
-          regex: /test coverage|missing tests|quality assurance|QA concern|manual testing|automated testing/i, 
-          title: "Testing Coverage Issue",
-          details: "Insufficient test coverage or quality assurance processes"
-        },
-        { 
-          regex: /dependency|waiting on|blocked by|external team|third party|vendor|integration/i, 
-          title: "External Dependency",
-          details: "Project progress blocked or dependent on external factors"
-        },
-        { 
-          regex: /communication issue|misunderstanding|unclear|confusion|not aligned|alignment/i, 
-          title: "Communication Issue",
-          details: "Team communication or alignment problems identified"
-        },
-        {
-          regex: /documentation|docs|missing information|need to document|knowledge transfer/i,
-          title: "Documentation Needed",
-          details: "Documentation is missing or insufficient"
-        },
-        {
-          regex: /onboarding|training|skill gap|learning curve|expertise needed/i,
-          title: "Skill or Training Gap",
-          details: "Team may need additional training or expertise"
-        },
-        {
-          regex: /risk assessment|contingency|backup plan|alternative approach|mitigation/i,
-          title: "Risk Management",
-          details: "Need for risk assessment or contingency planning"
-        }
-      ];
-
       // Helper function to extract relevant text around a match
       const extractRelevantText = (text, regex) => {
         const match = regex.exec(text);
@@ -1563,8 +1702,111 @@ function App() {
         const remainingSecs = Math.floor(seconds % 60);
         return `${minutes}:${remainingSecs.toString().padStart(2, '0')}`;
       };
+      
+      // Track open action items and questions
+      const actionItems = new Map(); // key: action description, value: {assignee, dueDate, timestamp}
+      const openQuestions = new Map(); // key: question, value: {asker, timestamp, lastResponse}
+      
+      // Process frames to identify action items and questions
+      contextData.context.forEach((frame, index) => {
+        if (!frame.description) return;
+        
+        const description = frame.description.toLowerCase();
+        const timestamp = frame.metadata?.timestamp || 0;
+        const nextFrame = contextData.context[index + 1];
+        
+        // Action Item Detection
+        const actionMatch = description.match(/(?:can you|could you|please)?\s*([^,.!?]+)\s*by\s*([^,.!?]+)/i);
+        if (actionMatch) {
+          const action = actionMatch[1].trim();
+          const dueDate = actionMatch[2].trim();
+          const assigneeMatch = description.match(/@(\w+)/);
+          const assignee = assigneeMatch ? assigneeMatch[1] : null;
+          
+          actionItems.set(action, {
+            assignee,
+            dueDate,
+            timestamp,
+            description: frame.description
+          });
+        }
+        
+        // Question Detection
+        const questionMatch = description.match(/(?:can|could|would|should|is|are|will|how|what|when|where|why|who)\s+([^,.!?]+)\??/i);
+        if (questionMatch) {
+          const question = questionMatch[0].trim();
+          const askerMatch = frame.description.match(/@(\w+)/);
+          const asker = askerMatch ? askerMatch[1] : "Someone";
+          
+          // Check if question was answered in next frame
+          const wasAnswered = nextFrame && 
+            (nextFrame.description.toLowerCase().includes('yes') ||
+             nextFrame.description.toLowerCase().includes('no') ||
+             nextFrame.description.length > 50); // Assume long responses are answers
+          
+          if (!wasAnswered) {
+            openQuestions.set(question, {
+              asker,
+              timestamp,
+              description: frame.description
+            });
+          }
+        }
+      });
 
-      // Process each frame with enhanced patterns
+      // Add open action items to warnings
+      actionItems.forEach((details, action) => {
+        warnings.warnings.push({
+          title: "Open Action Item",
+          time: formatTimestamp(details.timestamp),
+          details: `${details.assignee ? '@' + details.assignee : 'Someone'} needs to ${action} by ${details.dueDate}.\n\nContext: "${details.description}"`
+        });
+      });
+
+      // Add unanswered questions to warnings
+      openQuestions.forEach((details, question) => {
+        warnings.warnings.push({
+          title: "Unanswered Question",
+          time: formatTimestamp(details.timestamp),
+          details: `${details.asker} asked: "${question}"\n\nContext: "${details.description}"`
+        });
+      });
+
+      // Add existing warning patterns
+      const warningPatterns = [
+        { 
+          regex: /unclear requirements|requirements changed|scope change|change request|specification issue/i, 
+          title: "Requirements Clarity Issue",
+          details: "Requirements need clarification"
+        },
+        { 
+          regex: /technical debt|refactor needed|needs cleanup|architectural issue|code quality|maintenance/i, 
+          title: "Technical Debt Concern",
+          details: "Code quality issues identified"
+        },
+        { 
+          regex: /test coverage|missing tests|quality assurance|QA concern|manual testing|automated testing/i, 
+          title: "Testing Coverage Issue",
+          details: "Insufficient test coverage"
+        },
+        { 
+          regex: /dependency|waiting on|blocked by|external team|third party|vendor|integration/i, 
+          title: "External Dependency",
+          details: "Progress blocked by external factors"
+        },
+        { 
+          regex: /communication issue|misunderstanding|unclear|confusion|not aligned|alignment/i, 
+          title: "Communication Issue",
+          details: "Team alignment problems identified"
+        },
+        {
+          regex: /documentation|docs|missing information|need to document|knowledge transfer/i,
+          title: "Documentation Needed",
+          details: "Documentation is insufficient"
+        }
+      ];
+
+      // Process each frame with warning patterns
       contextData.context.forEach((frame, index) => {
         if (!frame.description) return;
         
@@ -1573,21 +1815,6 @@ function App() {
           ? formatTimestamp(frame.metadata.timestamp)
           : new Date().toLocaleTimeString();
           
-        // Check for red flags
-        redFlagPatterns.forEach(pattern => {
-          if (pattern.regex.test(description)) {
-            // Check if we already have this warning (avoid duplicates)
-            const existingWarning = warnings.redFlags.find(w => w.title === pattern.title);
-            if (!existingWarning) {
-              warnings.redFlags.push({
-                title: pattern.title,
-                time: timestamp,
-                details: `${pattern.details}: "${extractRelevantText(description, pattern.regex)}"`
-              });
-            }
-          }
-        });
-        
         // Check for warnings
         warningPatterns.forEach(pattern => {
           if (pattern.regex.test(description)) {
@@ -1604,27 +1831,18 @@ function App() {
         });
       });
 
-      // Add summary stats to provide context
+      // Add summary stats
       const totalFrames = contextData.context.length;
       const startTime = contextData.context[0]?.metadata?.timestamp || 0;
       const endTime = contextData.context[totalFrames-1]?.metadata?.timestamp || 0;
       const meetingDuration = endTime - startTime;
       
-      if (warnings.redFlags.length === 0 && warnings.warnings.length === 0) {
+      if (warnings.warnings.length === 0) {
         warnings.warnings.push({
-          title: "No issues detected in meeting",
+          title: "No issues detected",
           time: new Date().toLocaleTimeString(),
-          details: `Analysis complete. No significant issues identified in the meeting (${Math.floor(meetingDuration/60)}m ${Math.floor(meetingDuration%60)}s).`
+          details: `Analysis complete. No action items or concerns identified in the meeting (${Math.floor(meetingDuration/60)}m ${Math.floor(meetingDuration%60)}s).`
         });
-      } else {
-        // Add a summary red flag if there are multiple issues
-        if (warnings.redFlags.length >= 3) {
-          warnings.redFlags.unshift({
-            title: "Multiple Critical Issues",
-            time: new Date().toLocaleTimeString(),
-            details: `${warnings.redFlags.length} critical issues identified in this meeting. Recommend immediate attention.`
-          });
-        }
       }
 
       return warnings;
@@ -1635,12 +1853,31 @@ function App() {
   };
 
   // Function to manually refresh the mind map and warning data
-  const handleManualRefresh = () => {
+  const handleManualRefresh = async () => {
     if (!context?.context?.length) return;
     
-    setMindMapData(createEnhancedMindMap(context));
-    setWarningsData(createComprehensiveWarnings(context));
-    setLastContextHash(hashContext(context));
+    // Set loading state
+    setLoading(true);
+    
+    try {
+      // Refresh frames and context
+      await fetchFrames();
+      await fetchContext();
+      
+      // Create new data
+      const newMindMapData = createEnhancedMindMap(context);
+      const newWarningsData = createComprehensiveWarnings(context);
+      const newHash = hashContext(context);
+      
+      // Update state
+      setMindMapData(newMindMapData);
+      setLastContextHash(newHash);
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      // Clear loading state
+      setLoading(false);
+    }
   };
 
   // Hash the context to detect meaningful changes
@@ -1653,7 +1890,6 @@ function App() {
   useEffect(() => {
     if (!context?.context?.length) {
       setMindMapData(createDefaultMindMap());
-      setWarningsData(createDefaultWarnings());
       return;
     }
 
@@ -1673,7 +1909,6 @@ function App() {
     // Set a new timeout for updates (throttle to once per second)
     const timeoutId = setTimeout(() => {
       setMindMapData(createEnhancedMindMap(context));
-      setWarningsData(createComprehensiveWarnings(context));
       setLastContextHash(currentHash);
     }, 1000);
     
@@ -1719,14 +1954,6 @@ function App() {
   return (
     <Container maxWidth="xl" sx={{ py: 4 }}>
       <Grid container spacing={3}>
-        {/* Analysis Overview Section */}
-        <Grid item xs={12}>
-          <WarningsSection 
-            warnings={warningsData.warnings}
-            redFlags={warningsData.redFlags}
-          />
-        </Grid>
-
         {/* Existing UI Components */}
         <Grid item xs={12}>
           <Paper sx={{ p: 3 }}>
@@ -1775,7 +2002,6 @@ function App() {
                   currentFrame={currentFrame}
                 />
 
-                {/* Mind Map Visualization moved below chat interface */}
                 {mindMapData && (
                   <Box sx={{ mt: 3 }}>
                     <MindMap 
