@@ -203,15 +203,31 @@ const Textarea = styled.textarea`
 const AddNodeModal = styled(SettingsModal)``;
 const AddNodeContent = styled(SettingsContent)``;
 
+const Tooltip = styled.div`
+  font-size: 12px;
+  color: #a5a8b6;
+  margin: -8px 0 4px;
+  font-style: italic;
+`;
+
+const ResetButton = styled(Button)`
+  margin-left: 10px;
+  background: linear-gradient(145deg, #2e3245, #2a2d3e);
+  
+  &:hover {
+    background: linear-gradient(145deg, #2a2d3e, #2e3245);
+  }
+`;
+
 const MindMap = ({ data: initialData, onRefresh }) => {
   const svgRef = useRef();
   const [selectedNode, setSelectedNode] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAddNodeOpen, setIsAddNodeOpen] = useState(false);
   const [layoutSettings, setLayoutSettings] = useState({
-    forceStrength: -300,
-    linkDistance: 100,
-    centeringForce: 0.1
+    forceStrength: -400,
+    linkDistance: 120,
+    centeringForce: 0.15
   });
   const [newNode, setNewNode] = useState({
     name: '',
@@ -409,39 +425,42 @@ const MindMap = ({ data: initialData, onRefresh }) => {
 
     function formatNodeTitle(node) {
       if (!node.name || !node.details) {
-        return truncateText(node.name, 20);
+        return truncateText(node.name, 25);
       }
 
       let title = '';
-      // Special formatting based on node type
+      // Enhanced formatting based on node type
       switch (node.type) {
         case 'tasks':
-          const actionMatch = node.details.match(/(?:need to|should|must|will)\s+([^,.!?]+)/i);
-          title = actionMatch ? actionMatch[1] : node.name;
+          const actionMatch = node.details.match(/(?:need to|should|must|will|todo:?)\s+([^,.!?]+)/i);
+          title = actionMatch ? `📋 ${actionMatch[1]}` : `📋 ${node.name}`;
           break;
         
         case 'redFlags':
-          const riskMatch = node.details.match(/risk[s]?\s*[:]\s*([^,.!?]+)/i) ||
-                          node.details.match(/blocker[s]?\s*[:]\s*([^,.!?]+)/i);
-          title = riskMatch ? riskMatch[1] : node.name;
+          const riskMatch = node.details.match(/(?:risk|blocker|issue)[s]?\s*[:]\s*([^,.!?]+)/i);
+          title = riskMatch ? `⚠️ ${riskMatch[1]}` : `⚠️ ${node.name}`;
           break;
         
         case 'terms':
-          const termMatch = node.details.match(/([^:]+):/);
-          title = termMatch ? termMatch[1] : node.name;
+          const termMatch = node.details.match(/([^:]+):\s*([^,.!?]+)/);
+          title = termMatch ? `📚 ${termMatch[1]}` : `📚 ${node.name}`;
           break;
         
         case 'summary':
           const summaryMatch = node.details.match(/(?:decided|agreed|concluded|determined)\s+([^,.!?]+)/i) ||
                              node.details.match(/([^,.!?]+(?:improves|enhances|enables|provides|supports)[^,.!?]+)/i);
-          title = summaryMatch ? summaryMatch[1] : node.name;
+          title = summaryMatch ? `💡 ${summaryMatch[1]}` : `💡 ${node.name}`;
+          break;
+        
+        case 'app':
+          title = `🔷 ${node.name}`;
           break;
           
         default:
           title = node.name;
       }
       
-      return truncateText(cleanMarkdown(title), 20);
+      return truncateText(cleanMarkdown(title), 30);
     }
 
     // Helper function to truncate text at word boundary
@@ -474,35 +493,27 @@ const MindMap = ({ data: initialData, onRefresh }) => {
     function formatTooltipContent(content) {
       if (!content) return '';
       
-      // Pre-process content to improve formatting
-      let processedContent = content
-        // Remove redundant "Context:" headers from LLM output
-        .replace(/^Context:\s*/i, '')
-        // Remove redundant "Details:" headers from LLM output
-        .replace(/^Details:\s*/i, '')
-        // Convert timestamp patterns to more readable format
-        .replace(/\((\d+):(\d+)\)/g, '(at $1m $2s)')
-        // Add spacing after bullet points for better readability
-        .replace(/•/g, '• ');
-
-      return processedContent
-        // Style headers
-        .replace(/#{1,6}\s+(.*)/g, '<strong style="display: block; margin-top: 8px; margin-bottom: 4px; color: #4CAF50;">$1</strong>')
-        // Style bold text
-        .replace(/\*\*(.*?)\*\*/g, '<strong style="color: #90caf9">$1</strong>')
-        // Style italic text
-        .replace(/\*(.*?)\*/g, '<em style="color: #b39ddb">$1</em>')
-        // Convert bullet points to styled list items
-        .replace(/(?:^|\n)[\s]*[-*+][\s]+(.*)/g, '<div style="margin: 4px 0; padding-left: 8px; border-left: 2px solid #4CAF50;">• $1</div>')
-        // Style code blocks
-        .replace(/```([\s\S]*?)```/g, '<pre style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace;">$1</pre>')
-        // Style inline code
-        .replace(/`([^`]+)`/g, '<code style="background: rgba(0,0,0,0.2); padding: 2px 4px; border-radius: 2px; font-family: monospace;">$1</code>')
-        // Convert newlines to styled paragraphs
-        .replace(/\n\n/g, '</p><p style="margin: 8px 0;">')
-        .replace(/\n/g, '<br>')
-        // Wrap in paragraph tags
-        .replace(/^(.+)$/, '<p style="margin: 8px 0;">$1</p>');
+      // Clean up markdown artifacts
+      let cleanContent = content
+        .replace(/```[a-z]*\n/g, '') // Remove code block markers
+        .replace(/`/g, '') // Remove inline code markers
+        .replace(/\*\*/g, '') // Remove bold markers
+        .replace(/\n+/g, '<br/>') // Convert newlines to HTML breaks
+        .replace(/- /g, '• ') // Convert markdown lists to bullet points
+        .trim();
+      
+      // Add emoji indicators based on content
+      if (cleanContent.match(/(?:risk|blocker|issue)[s]?:/i)) {
+        cleanContent = '⚠️ ' + cleanContent;
+      } else if (cleanContent.match(/(?:need to|should|must|will|todo):/i)) {
+        cleanContent = '📋 ' + cleanContent;
+      } else if (cleanContent.match(/(?:decided|agreed|concluded):/i)) {
+        cleanContent = '✅ ' + cleanContent;
+      }
+      
+      return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        ${cleanContent}
+      </div>`;
     }
 
     const width = 800;
@@ -536,18 +547,30 @@ const MindMap = ({ data: initialData, onRefresh }) => {
     // Create force simulation with current settings
     const simulation = d3.forceSimulation(visualData.nodes)
       .force("link", d3.forceLink(visualData.links).id(d => d.id).distance(d => {
-        // Shorter distances for PM-specific nodes to keep them closer
-        if (d.source.id.startsWith('sprint-') || d.target.id.startsWith('sprint-')) return 60;
-        if (d.source.id.startsWith('goal-') || d.target.id.startsWith('goal-')) return 70;
-        return layoutSettings.linkDistance * 0.7; // Reduce default distance by 30%
+        // Adjust distances based on node types
+        if (d.source.type === 'app' || d.target.type === 'app') return layoutSettings.linkDistance * 1.2;
+        if (d.source.id.startsWith('sprint-') || d.target.id.startsWith('sprint-')) return layoutSettings.linkDistance * 0.8;
+        if (d.source.type === 'redFlags' || d.target.type === 'redFlags') return layoutSettings.linkDistance * 1.1;
+        return layoutSettings.linkDistance;
       }))
       .force("charge", d3.forceManyBody()
-        .strength(d => d.type === 'app' ? layoutSettings.forceStrength * 1.5 : layoutSettings.forceStrength))
+        .strength(d => {
+          // Adjust repulsion based on node type
+          if (d.type === 'app') return layoutSettings.forceStrength * 1.5;
+          if (d.type === 'summary') return layoutSettings.forceStrength * 1.2;
+          if (d.type === 'redFlags') return layoutSettings.forceStrength * 1.1;
+          return layoutSettings.forceStrength;
+        }))
       .force("center", d3.forceCenter(containerWidth / 2, containerHeight / 2).strength(layoutSettings.centeringForce))
-      .force("collision", d3.forceCollide().radius(d => d.type === 'app' ? 45 : 35))
-      // Add X and Y forces to prevent nodes from going too far from center
-      .force("x", d3.forceX(containerWidth / 2).strength(0.05))
-      .force("y", d3.forceY(containerHeight / 2).strength(0.05));
+      .force("collision", d3.forceCollide().radius(d => {
+        // Adjust collision radius based on node type
+        if (d.type === 'app') return 50;
+        if (d.type === 'summary') return 45;
+        if (d.type === 'redFlags') return 42;
+        return 40;
+      }))
+      .force("x", d3.forceX(containerWidth / 2).strength(0.08))
+      .force("y", d3.forceY(containerHeight / 2).strength(0.08));
 
     // Create gradient definitions
     const defs = svg.append("defs");
@@ -612,28 +635,34 @@ const MindMap = ({ data: initialData, onRefresh }) => {
     nodes.append("circle")
       .attr("r", d => {
         switch(d.type) {
-          case 'app': return 38;
-          case 'summary': return 32;
-          case 'tasks': return 28;
-          case 'redFlags': return 28;
-          case 'users': return 28;
-          case 'terms': return 25;
-          default: return 25;
+          case 'app': return 40;
+          case 'summary': return 35;
+          case 'tasks': return 32;
+          case 'redFlags': return 32;
+          case 'users': return 30;
+          case 'terms': return 28;
+          default: return 28;
         }
       })
       .attr("fill", d => `url(#gradient-${d.type || 'default'})`)
       .attr("stroke", d => {
-        if (d.id.startsWith('sprint-') || d.id.startsWith('goal-')) return "#81c784";
-        if (d.id.startsWith('risk-') || d.id.startsWith('dep-')) return "#e57373";
-        if (d.type === 'app') return "#b39ddb";
+        if (d.id.startsWith('sprint-')) return "#81c784";
+        if (d.id.startsWith('goal-')) return "#4caf50";
+        if (d.id.startsWith('risk-') || d.id.startsWith('dep-')) return "#ef5350";
+        if (d.id.startsWith('blocker-')) return "#f44336";
+        if (d.type === 'app') return "#7e57c2";
+        if (d.type === 'summary') return "#42a5f5";
+        if (d.type === 'tasks') return "#66bb6a";
+        if (d.type === 'redFlags') return "#ef5350";
         return "rgba(255,255,255,0.1)";
       })
       .attr("stroke-width", d => {
-        if (d.id.startsWith('sprint-') || d.id.startsWith('goal-')) return 2;
-        if (d.type === 'app') return 2;
-        return 1;
+        if (d.id.startsWith('sprint-') || d.id.startsWith('goal-')) return 3;
+        if (d.type === 'app') return 2.5;
+        if (d.type === 'redFlags') return 2;
+        return 1.5;
       })
-      .style("filter", "drop-shadow(0 4px 6px rgba(0,0,0,0.1))")
+      .style("filter", "drop-shadow(0 4px 8px rgba(0,0,0,0.2))")
       .style("transition", "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)");
 
     // Add labels to nodes with improved styling
@@ -642,9 +671,9 @@ const MindMap = ({ data: initialData, onRefresh }) => {
       .attr("text-anchor", "middle")
       .attr("dy", d => {
         switch(d.type) {
-          case 'app': return 38;
-          case 'summary': return 34;
-          default: return 32;
+          case 'app': return 42;
+          case 'summary': return 38;
+          default: return 35;
         }
       })
       .attr("fill", "white")
@@ -654,9 +683,10 @@ const MindMap = ({ data: initialData, onRefresh }) => {
             d.id === 'dependencies-constraints' ||
             d.id === 'risks-resources' ||
             d.id === 'stakeholder-requests') {
-          return "15px";
+          return "16px";
         }
-        return "13px";
+        if (d.type === 'app') return "15px";
+        return "14px";
       })
       .style("font-weight", d => {
         if (d.id.startsWith('sprint-') || 
@@ -666,10 +696,11 @@ const MindMap = ({ data: initialData, onRefresh }) => {
             d.id === 'stakeholder-requests') {
           return "600";
         }
+        if (d.type === 'app') return "500";
         return "400";
       })
-      .style("letter-spacing", "0.02em")
-      .style("text-shadow", "0 2px 4px rgba(0,0,0,0.2)")
+      .style("letter-spacing", "0.03em")
+      .style("text-shadow", "0 2px 4px rgba(0,0,0,0.3)")
       .style("pointer-events", "none");
 
     // Add icons/indicators for nodes with details
@@ -903,11 +934,12 @@ const MindMap = ({ data: initialData, onRefresh }) => {
             <SettingsTitle>Mind Map Settings</SettingsTitle>
             
             <FormGroup>
-              <Label>Force Strength</Label>
+              <Label>Node Spacing (Force Strength)</Label>
+              <Tooltip>Adjusts how far apart nodes push each other. More negative values create more space between nodes.</Tooltip>
               <Input 
                 type="range" 
-                min="-500" 
-                max="-100" 
+                min="-600" 
+                max="-200" 
                 value={layoutSettings.forceStrength} 
                 onChange={e => setLayoutSettings({...layoutSettings, forceStrength: parseInt(e.target.value)})}
               />
@@ -915,24 +947,26 @@ const MindMap = ({ data: initialData, onRefresh }) => {
             </FormGroup>
             
             <FormGroup>
-              <Label>Link Distance</Label>
+              <Label>Connection Length</Label>
+              <Tooltip>Controls the preferred length of connections between nodes. Higher values spread out the network.</Tooltip>
               <Input 
                 type="range" 
-                min="50" 
-                max="300" 
+                min="80" 
+                max="200" 
                 value={layoutSettings.linkDistance} 
                 onChange={e => setLayoutSettings({...layoutSettings, linkDistance: parseInt(e.target.value)})}
               />
-              <span>{layoutSettings.linkDistance}</span>
+              <span>{layoutSettings.linkDistance}px</span>
             </FormGroup>
             
             <FormGroup>
-              <Label>Centering Force</Label>
+              <Label>Center Gravity</Label>
+              <Tooltip>Determines how strongly nodes are pulled toward the center. Higher values create a more compact layout.</Tooltip>
               <Input 
                 type="range" 
                 min="0" 
-                max="1" 
-                step="0.1" 
+                max="0.3" 
+                step="0.05" 
                 value={layoutSettings.centeringForce} 
                 onChange={e => setLayoutSettings({...layoutSettings, centeringForce: parseFloat(e.target.value)})}
               />
@@ -940,6 +974,14 @@ const MindMap = ({ data: initialData, onRefresh }) => {
             </FormGroup>
             
             <Button onClick={applySettings}>Apply Settings</Button>
+            <ResetButton onClick={() => {
+              setLayoutSettings({
+                forceStrength: -400,
+                linkDistance: 120,
+                centeringForce: 0.15
+              });
+              setTimeout(applySettings, 0);
+            }}>Reset to Default</ResetButton>
           </SettingsContent>
         </SettingsModal>
       )}
