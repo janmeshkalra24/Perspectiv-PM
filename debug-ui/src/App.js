@@ -741,6 +741,267 @@ function ChatInterface({ context, currentFrame }) {
   );
 }
 
+function TextStreamInput({ onDataCleared }) {
+  const [text, setText] = useState('');
+  const [chunkSize, setChunkSize] = useState(1);
+  const [delayInterval, setDelayInterval] = useState(1.0);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [status, setStatus] = useState('');
+  const [debug, setDebug] = useState('');
+
+  const handleStartProcessing = async () => {
+    try {
+      if (!text) {
+        setStatus('Please enter some text first');
+        return;
+      }
+
+      setStatus('Starting text processing...');
+      setDebug('Sending start processing request...');
+      
+      // Start processing with URL-encoded form data
+      const params = new URLSearchParams();
+      params.append('text', text);
+      params.append('chunk_size', chunkSize.toString());
+      params.append('delay_interval', delayInterval.toString());
+      params.append('redis_prefix', 'text:');
+      
+      const processResponse = await axios.post(`${API_BASE_URL}/start_text_processing`, params, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      });
+      
+      setDebug(`Process response: ${JSON.stringify(processResponse.data)}`);
+      
+      if (processResponse.data.status === 'success') {
+        setStatus('Text processing started successfully');
+        setIsProcessing(true);
+      }
+    } catch (error) {
+      console.error('Process error:', error);
+      setDebug(`Error details: ${JSON.stringify({
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        headers: error.response?.headers
+      }, null, 2)}`);
+      setStatus(`Error: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
+  const handleStopProcessing = async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/stop_text_processing`);
+      if (response.data.status === 'success') {
+        setStatus('Text processing stopped');
+        setIsProcessing(false);
+      }
+    } catch (error) {
+      setStatus(`Error stopping processing: ${error.message}`);
+    }
+  };
+
+  const handleClearData = async () => {
+    try {
+      setIsClearing(true);
+      setStatus('Clearing all text data...');
+      
+      const response = await axios.post(`${API_BASE_URL}/clear_text_data`);
+      
+      if (response.data.status === 'success') {
+        setText('');
+        setIsProcessing(false);
+        setDebug('');
+        
+        if (onDataCleared) {
+          onDataCleared();
+        }
+        
+        setStatus('All text data cleared successfully');
+      }
+    } catch (error) {
+      setStatus(`Error clearing data: ${error.message}`);
+      console.error('Clear data error:', error);
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  return (
+    <Paper sx={{ p: 2, mb: 3 }}>
+      <Typography variant="h6" gutterBottom>
+        Text Stream Input
+      </Typography>
+      <Grid container spacing={2}>
+        <Grid item xs={12}>
+          <TextField
+            fullWidth
+            multiline
+            rows={4}
+            label="Enter text to stream"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={isProcessing}
+          />
+        </Grid>
+        <Grid item xs={6}>
+          <TextField
+            fullWidth
+            label="Chunk Size (sentences)"
+            type="number"
+            value={chunkSize}
+            onChange={(e) => setChunkSize(parseInt(e.target.value))}
+            inputProps={{ step: 1, min: 1 }}
+            disabled={isProcessing}
+          />
+        </Grid>
+        <Grid item xs={6}>
+          <TextField
+            fullWidth
+            label="Delay Interval (seconds)"
+            type="number"
+            value={delayInterval}
+            onChange={(e) => setDelayInterval(parseFloat(e.target.value))}
+            inputProps={{ step: 0.1, min: 0.1 }}
+            disabled={isProcessing}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          {!isProcessing ? (
+            <Grid container spacing={2}>
+              <Grid item xs={8}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  fullWidth
+                  onClick={handleStartProcessing}
+                  disabled={!text || isClearing}
+                >
+                  Start Text Processing
+                </Button>
+              </Grid>
+              <Grid item xs={4}>
+                <Button
+                  variant="contained"
+                  color="error"
+                  fullWidth
+                  onClick={handleClearData}
+                  disabled={isClearing}
+                >
+                  Clear Text Data
+                </Button>
+              </Grid>
+            </Grid>
+          ) : (
+            <Button
+              variant="contained"
+              color="error"
+              fullWidth
+              onClick={handleStopProcessing}
+            >
+              Stop Processing
+            </Button>
+          )}
+        </Grid>
+        {status && (
+          <Grid item xs={12}>
+            <Typography color={status.includes('Error') ? 'error' : 'textSecondary'}>
+              {status}
+            </Typography>
+          </Grid>
+        )}
+        
+        {debug && (
+          <Grid item xs={12}>
+            <Typography variant="subtitle2" gutterBottom>Debug Info:</Typography>
+            <Paper sx={{ p: 1, bgcolor: 'grey.900', maxHeight: 200, overflow: 'auto' }}>
+              <Typography
+                variant="caption"
+                component="pre"
+                sx={{ 
+                  m: 0,
+                  color: 'grey.300',
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all'
+                }}
+              >
+                {debug}
+              </Typography>
+            </Paper>
+          </Grid>
+        )}
+      </Grid>
+    </Paper>
+  );
+}
+
+function LiveTextSummary({ isProcessing }) {
+  const [summary, setSummary] = useState('');
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let interval;
+    if (isProcessing) {
+      interval = setInterval(async () => {
+        try {
+          const response = await axios.get(`${API_BASE_URL}/text_summary`);
+          if (response.data.summary) {
+            setSummary(response.data.summary);
+          }
+        } catch (error) {
+          console.error('Error fetching summary:', error);
+          setError(error.message);
+        }
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isProcessing]);
+
+  return (
+    <Paper sx={{ p: 2, mb: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6" sx={{ flex: 1 }}>
+          Live Text Summary
+        </Typography>
+        {isProcessing && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                borderRadius: '50%',
+                bgcolor: 'error.main',
+                animation: 'pulse 1.5s ease-in-out infinite',
+                '@keyframes pulse': {
+                  '0%': { opacity: 1 },
+                  '50%': { opacity: 0.4 },
+                  '100%': { opacity: 1 }
+                }
+              }}
+            />
+            <Typography variant="caption" color="error">
+              Live
+            </Typography>
+          </Box>
+        )}
+      </Box>
+      
+      {error ? (
+        <Typography color="error">Error: {error}</Typography>
+      ) : (
+        <Typography>
+          {summary || (isProcessing ? 'Processing text...' : 'No text being processed')}
+        </Typography>
+      )}
+    </Paper>
+  );
+}
+
 function App() {
   const [frames, setFrames] = useState([]);
   const [totalFrames, setTotalFrames] = useState(0);
@@ -753,6 +1014,8 @@ function App() {
   const [lastContextHash, setLastContextHash] = useState('');
   const [updateTimeout, setUpdateTimeout] = useState(null);
   const [manualRefreshEnabled, setManualRefreshEnabled] = useState(true);
+  const [isTextProcessing, setIsTextProcessing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
     fetchFrames();
@@ -1928,6 +2191,24 @@ function App() {
     }
   }, [context]);
 
+  // Add this to your existing useEffect for polling
+  useEffect(() => {
+    const checkTextProcessing = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/text_processing_status`);
+        setIsTextProcessing(response.data.is_processing);
+      } catch (error) {
+        console.error('Error checking text processing status:', error);
+      }
+    };
+
+    const interval = setInterval(() => {
+      checkTextProcessing();
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   if (loading) {
     return (
       <Box 
@@ -2015,6 +2296,33 @@ function App() {
           </Paper>
         </Grid>
       </Grid>
+      <TextStreamInput onDataCleared={() => setIsTextProcessing(false)} />
+      <LiveTextSummary isProcessing={isTextProcessing} />
+      {/* Recording status indicator */}
+      {isRecording && (
+        <Box sx={{ 
+          position: 'fixed', 
+          top: 16, 
+          right: 16, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          padding: '4px 12px',
+          borderRadius: '16px',
+          color: 'white',
+          zIndex: 1000
+        }}>
+          <Box sx={{ 
+            width: 8, 
+            height: 8, 
+            borderRadius: '50%', 
+            backgroundColor: 'error.main',
+            animation: 'pulse 1.5s ease-in-out infinite'
+          }} />
+          Live
+        </Box>
+      )}
     </Container>
   );
 }

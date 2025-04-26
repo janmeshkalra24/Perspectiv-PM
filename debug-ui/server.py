@@ -17,6 +17,7 @@ import queue
 import google.generativeai as genai
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from text_processor import TextProcessor
 
 app = FastAPI()
 
@@ -560,4 +561,71 @@ Answer:"""
         
     except Exception as e:
         logger.error(f"Error in chat endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Initialize text processor
+text_processor = TextProcessor(redis_client, redis_prefix="text:")  # Match frontend prefix
+
+@app.post("/start_text_processing")
+async def start_text_processing(
+    text: str = Form(...),
+    chunk_size: int = Form(...),
+    delay_interval: float = Form(...),
+    redis_prefix: str = Form("text:")
+):
+    """Start text processing with given parameters."""
+    try:
+        logger.info(f"Starting text processing with chunk_size={chunk_size}, delay_interval={delay_interval}")
+        await text_processor.stream_text(text, chunk_size, delay_interval)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error starting text processing: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/stop_text_processing")
+async def stop_text_processing():
+    """Stop text processing."""
+    try:
+        text_processor.stop_processing()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/clear_text_data")
+async def clear_text_data():
+    """Clear all text data."""
+    try:
+        text_processor.clear_data()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/text_processing_status")
+async def get_text_processing_status():
+    """Get current text processing status."""
+    try:
+        return text_processor.get_processing_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/text_summary")
+async def get_text_summary():
+    """Get the current text summary from Redis."""
+    try:
+        logger.info("Retrieving text summary from Redis")
+        summary_key = f"{text_processor.prefix}summary"
+        logger.info(f"Using Redis key: {summary_key}")
+        
+        # Get the summary from Redis
+        summary = text_processor.redis.get(summary_key)
+        if summary:
+            summary = summary.decode('utf-8')
+        
+        return {
+            "status": "success",
+            "summary": summary or "",
+            "is_processing": text_processor.is_processing
+        }
+    except Exception as e:
+        logger.error(f"Error getting text summary: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) 
