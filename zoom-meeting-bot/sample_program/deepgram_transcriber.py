@@ -1,5 +1,6 @@
 from deepgram.utils import verboselogs
 import os
+from datetime import datetime
 
 from deepgram import (
     DeepgramClient,
@@ -31,7 +32,12 @@ class DeepgramTranscriber:
             sentence = result.channel.alternatives[0].transcript
             if len(sentence) == 0:
                 return
-            print(f"Transcription: {sentence}")
+            print(f"Transcription: {sentence}")            
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            transcript_path = 'sample_program/out/transcript.txt'
+            os.makedirs(os.path.dirname(transcript_path), exist_ok=True)
+            with open(transcript_path, 'a') as f:
+                f.write(f"[{timestamp}] {sentence}\n")
 
         self.dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
 

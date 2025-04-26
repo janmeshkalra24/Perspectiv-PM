@@ -3,7 +3,7 @@ import jwt
 from deepgram_transcriber import DeepgramTranscriber
 from datetime import datetime, timedelta
 import os
-
+import time
 import cv2
 import numpy as np
 import gi
@@ -182,7 +182,48 @@ class MeetingBot:
         print("on_user_join_callback called. joined_user_ids =", joined_user_ids, "user_name =", user_name)
 
     def on_sharing_status_callback(self, sharing_status):
-        print("on_sharing_status_callback called. sharing_status =", sharing_status, "user_id =", sharing_status.userid)
+        print("on_sharing_status_callback called. sharing_status =", sharing_status)
+        if sharing_status and sharing_status.userid:
+            print(f"User {sharing_status.userid} started sharing")
+            
+            # Clean up any existing video helper
+            if self.video_helper:
+                self.video_helper.unSubscribe()
+                self.video_helper = None
+            
+            # Wait a moment for sharing to initialize
+            time.sleep(1)
+            
+            # Set up video helper for screen sharing
+            self.renderer_delegate = zoom.ZoomSDKRendererDelegateCallbacks(onRawDataFrameReceivedCallback=self.on_raw_data_frame_received_callback)
+            self.video_helper = zoom.createRenderer(self.renderer_delegate)
+            self.video_helper.setRawDataResolution(zoom.ZoomSDKResolution_720P)
+            
+            # Get sharing info to verify it's active
+            sharing_info_list = self.meeting_sharing_controller.GetSharingSourceInfoList(sharing_status.userid)
+            if not sharing_info_list:
+                print("No sharing info available yet, waiting...")
+                time.sleep(2)  # Wait longer if no sharing info
+            
+            # Try to subscribe multiple times with increasing delays
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                subscribe_result = self.video_helper.subscribe(sharing_status.userid, zoom.ZoomSDKRawDataType.RAW_DATA_TYPE_SHARE)
+                print(f"Attempt {attempt + 1} video_helper subscribe_result =", subscribe_result)
+                
+                if subscribe_result == zoom.SDKERR_SUCCESS:
+                    print("Successfully subscribed to screen sharing")
+                    break
+                    
+                if attempt < max_attempts - 1:
+                    wait_time = (attempt + 1) * 2
+                    print(f"Failed to subscribe, waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+        else:
+            print("Sharing stopped")
+            if self.video_helper:
+                self.video_helper.unSubscribe()
+                self.video_helper = None
 
     # NOTE: content will always be None use chat_msg_info.GetContent() instead
     def on_chat_msg_notification_callback(self, chat_msg_info, content):
@@ -255,7 +296,7 @@ class MeetingBot:
 
         # Send a welcome message to the chat
         builder = self.chat_ctrl.GetChatMessageBuilder()
-        builder.SetContent("Welcoome to the PyZoomMeetingSDK")
+        builder.SetContent("Hi I'm Perspectiv Bot. I'm a virtual assistant here to help you with your meeting. Ask me anything!")
         builder.SetReceiver(0)
         builder.SetMessageType(zoom.SDKChatMessageType.To_All)
         msg = builder.Build()
@@ -273,16 +314,16 @@ class MeetingBot:
         print("on_mic_initialize_callback called")
         self.audio_raw_data_sender = sender
 
-    def on_mic_start_send_callback(self):
-        print("on_mic_start_send_callback called")
-        audio_path = 'sample_program/input_audio/test_audio_16778240.pcm'
-        if not os.path.exists(audio_path):
-            print(f"Audio file not found: {audio_path}")
-            return
+    # def on_mic_start_send_callback(self):
+    #     print("on_mic_start_send_callback called")
+    #     audio_path = 'sample_program/input_audio/test_audio_16778240.pcm'
+    #     if not os.path.exists(audio_path):
+    #         print(f"Audio file not found: {audio_path}")
+    #         return
             
-        with open(audio_path, 'rb') as pcm_file:
-            chunk = pcm_file.read(64000*10)
-            self.audio_raw_data_sender.send(chunk, 32000, zoom.ZoomSDKAudioChannel_Mono)
+    #     with open(audio_path, 'rb') as pcm_file:
+    #         chunk = pcm_file.read(64000*10)
+    #         self.audio_raw_data_sender.send(chunk, 32000, zoom.ZoomSDKAudioChannel_Mono)
 
     def on_one_way_audio_raw_data_received_callback(self, data, node_id):
         # Write audio to file (now supports .mp3 or .wav)
@@ -350,44 +391,8 @@ class MeetingBot:
         audio_helper_subscribe_result = self.audio_helper.subscribe(self.audio_source, False)
         print("audio_helper_subscribe_result =",audio_helper_subscribe_result)
 
-        self.virtual_audio_mic_event_passthrough = zoom.ZoomSDKVirtualAudioMicEventCallbacks(onMicInitializeCallback=self.on_mic_initialize_callback,onMicStartSendCallback=self.on_mic_start_send_callback)
-        audio_helper_set_external_audio_source_result = self.audio_helper.setExternalAudioSource(self.virtual_audio_mic_event_passthrough)
-        print("audio_helper_set_external_audio_source_result =", audio_helper_set_external_audio_source_result)
-
-        self.renderer_delegate = zoom.ZoomSDKRendererDelegateCallbacks(onRawDataFrameReceivedCallback=self.on_raw_data_frame_received_callback)
-        self.video_helper = zoom.createRenderer(self.renderer_delegate)
-
-        self.video_helper.setRawDataResolution(zoom.ZoomSDKResolution_720P)
-        subscribe_result = self.video_helper.subscribe(self.other_participant_id, zoom.ZoomSDKRawDataType.RAW_DATA_TYPE_VIDEO)
-        print("video_helper subscribe_result =", subscribe_result)
-
-        self.virtual_camera_video_source = zoom.ZoomSDKVideoSourceCallbacks(onInitializeCallback=self.on_virtual_camera_initialize_callback, onStartSendCallback=self.on_virtual_camera_start_send_callback)
-        self.video_source_helper = zoom.GetRawdataVideoSourceHelper()
-        if self.video_source_helper:
-            print("video_source_helper is not None")
-            set_external_video_source_result = self.video_source_helper.setExternalVideoSource(self.virtual_camera_video_source)
-            print("set_external_video_source_result =", set_external_video_source_result)
-            if set_external_video_source_result == zoom.SDKERR_SUCCESS:
-                print("starting video")
-                self.meeting_video_controller = self.meeting_service.GetMeetingVideoController()
-                print("meeting_video_controller =", self.meeting_video_controller)
-                print("unmuting video")
-                self.meeting_video_controller.UnmuteVideo()
-                print("unmuted video")
-        else:
-            print("video_source_helper is None")
-
-    def on_virtual_camera_start_send_callback(self):
-        print("on_virtual_camera_start_send_callback called")
-        if self.video_sender:
-            red_frame = create_red_yuv420_frame(640, 360)
-            self.video_sender.sendVideoFrame(red_frame, 640, 360, 0, zoom.FrameDataFormat_I420_FULL)
-
-    def on_virtual_camera_initialize_callback(self, video_sender, support_cap_list, suggest_cap):
-        print("on_virtual_camera_initialize_callback called")
-        self.video_sender = video_sender
-
     def on_raw_data_frame_received_callback(self, data):
+        print("Video raw data frame received")
         if self.video_frame_counter % 10 == 0:
             frame_number = int(self.video_frame_counter / 10)
             save_yuv420_frame_as_png(data.GetBuffer(), 640, 360, f"sample_program/out/video_frames/output_{frame_number:06d}.png")
