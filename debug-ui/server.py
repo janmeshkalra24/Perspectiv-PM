@@ -18,12 +18,29 @@ import google.generativeai as genai
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from text_processor import TextProcessor
+import base64
 
 app = FastAPI()
 
 # Configure logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import ProfileManager and UserProfile from screen_understanding.core
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from screen_understanding.core import ProfileManager, UserProfile
+    logger.info("Successfully imported ProfileManager from screen_understanding.core")
+except ImportError as e:
+    logger.error(f"Error importing ProfileManager: {e}")
+    # Define stub classes if import fails
+    class ProfileManager:
+        def __init__(self, profiles_file=None):
+            self.profiles = {}
+        def create_test_users(self):
+            pass
+    class UserProfile:
+        pass
 
 # Load environment variables
 load_dotenv()
@@ -628,4 +645,508 @@ async def get_text_summary():
         }
     except Exception as e:
         logger.error(f"Error getting text summary: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+# User profile handling classes
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    workload: Optional[str] = None
+    blockers: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
+    
+# Path to user profiles file
+USER_PROFILES_FILE = os.path.join(WORKSPACE_ROOT, "user_profiles.json")
+
+# Create a profile manager instance for direct access to profile functionality
+profile_manager = ProfileManager(profiles_file=USER_PROFILES_FILE)
+
+def load_profiles():
+    """Load user profiles directly from the profiles file."""
+    try:
+        if os.path.exists(USER_PROFILES_FILE):
+            # Always read directly from disk
+            with open(USER_PROFILES_FILE, "r") as f:
+                profiles = json.load(f)
+            logger.info(f"Loaded {len(profiles)} profiles from {USER_PROFILES_FILE}")
+            return profiles
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading profiles: {e}", exc_info=True)
+        return {}
+        
+def save_profiles(profiles):
+    """Save user profiles to the profiles file."""
+    try:
+        with open(USER_PROFILES_FILE, "w") as f:
+            json.dump(profiles, f, indent=2)
+        logger.info(f"Saved {len(profiles)} profiles to {USER_PROFILES_FILE}")
+    except Exception as e:
+        logger.error(f"Error saving profiles: {e}", exc_info=True)
+
+@app.get("/profiles")
+async def get_profiles(refresh: bool = False):
+    """Get all user profiles from the file system or profile manager.
+    
+    Args:
+        refresh: If True, force reload profiles from disk
+    """
+    try:
+        # If refresh flag is set, force profile manager to reload from disk
+        if refresh:
+            logger.info("Forced reload of profiles from disk")
+            # Reinitialize the profile manager to force reload
+            global profile_manager
+            profile_manager = ProfileManager(profiles_file=USER_PROFILES_FILE)
+        
+        # Load profiles directly from profile manager for more up-to-date data
+        profiles_dict = {}
+        for user_id, profile in profile_manager.profiles.items():
+            # Convert UserProfile objects to dictionaries
+            if hasattr(profile, 'to_dict'):
+                profiles_dict[user_id] = profile.to_dict()
+            else:
+                # Fallback for dictionary-based profiles
+                profiles_dict[user_id] = profile
+        
+        # If still no profiles, load from file
+        if not profiles_dict:
+            logger.info("No profiles in profile_manager, loading from disk")
+            profiles_dict = load_profiles()
+            
+        logger.info(f"Returning {len(profiles_dict)} profiles")
+        return profiles_dict
+    except Exception as e:
+        logger.error(f"Error getting profiles: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.get("/profiles/{user_id}")
+async def get_profile(user_id: str):
+    """Get a specific user profile."""
+    try:
+        profiles = load_profiles()
+        if user_id not in profiles:
+            raise HTTPException(status_code=404, detail=f"Profile not found for user {user_id}")
+        return profiles[user_id]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting profile for {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.post("/profiles")
+async def create_or_update_profile(profile_data: Dict[str, Any]):
+    """Create or update a user profile."""
+    try:
+        user_id = profile_data.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+            
+        profiles = load_profiles()
+        
+        # Create new profile or update existing one
+        if user_id in profiles:
+            # Update existing profile
+            profiles[user_id].update(profile_data)
+            profiles[user_id]["last_updated"] = time.time()
+        else:
+            # Create new profile
+            profiles[user_id] = profile_data
+            profiles[user_id]["last_updated"] = time.time()
+            if "last_seen" not in profiles[user_id]:
+                profiles[user_id]["last_seen"] = time.time()
+                
+        save_profiles(profiles)
+        
+        return profiles[user_id]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating/updating profile: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.patch("/profiles/{user_id}")
+async def update_profile(user_id: str, update_data: UserProfileUpdate):
+    """Update fields in a user profile."""
+    try:
+        profiles = load_profiles()
+        
+        if user_id not in profiles:
+            raise HTTPException(status_code=404, detail=f"Profile not found for user {user_id}")
+            
+        # Update only the fields specified in the request
+        profile = profiles[user_id]
+        update_dict = update_data.dict(exclude_unset=True)
+        
+        for field, value in update_dict.items():
+            if value is not None:
+                profile[field] = value
+                
+        profile["last_updated"] = time.time()
+        save_profiles(profiles)
+        
+        return profile
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating profile for {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.post("/profiles/clear-all")
+async def clear_all_profiles():
+    """Delete all user profiles."""
+    try:
+        # Save an empty dictionary to the profiles file
+        save_profiles({})
+        
+        # Also clear the profile_manager profiles
+        profile_manager.profiles = {}
+        
+        logger.info("Cleared all user profiles")
+        
+        return {
+            "status": "success", 
+            "message": "All user profiles have been cleared successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error clearing all profiles: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/profiles/{user_id}/blockers")
+async def add_blocker(user_id: str, blocker_data: Dict[str, str]):
+    """Add a blocker to a user profile."""
+    try:
+        blocker = blocker_data.get("blocker")
+        if not blocker:
+            raise HTTPException(status_code=400, detail="blocker is required")
+            
+        profiles = load_profiles()
+        
+        if user_id not in profiles:
+            raise HTTPException(status_code=404, detail=f"Profile not found for user {user_id}")
+            
+        profile = profiles[user_id]
+        
+        # Initialize blockers list if it doesn't exist
+        if "blockers" not in profile:
+            profile["blockers"] = []
+            
+        # Add blocker if it doesn't already exist
+        if blocker not in profile["blockers"]:
+            profile["blockers"].append(blocker)
+            
+        profile["last_updated"] = time.time()
+        save_profiles(profiles)
+        
+        return profile
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding blocker for {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.delete("/profiles/{user_id}/blockers/{blocker_index}")
+async def remove_blocker(user_id: str, blocker_index: int):
+    """Remove a blocker from a user profile."""
+    try:
+        profiles = load_profiles()
+        
+        if user_id not in profiles:
+            raise HTTPException(status_code=404, detail=f"Profile not found for user {user_id}")
+            
+        profile = profiles[user_id]
+        
+        if "blockers" not in profile or blocker_index >= len(profile["blockers"]):
+            raise HTTPException(status_code=404, detail=f"Blocker at index {blocker_index} not found")
+            
+        # Remove the blocker
+        profile["blockers"].pop(blocker_index)
+        profile["last_updated"] = time.time()
+        save_profiles(profiles)
+        
+        return profile
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error removing blocker for {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.post("/profiles/{user_id}/decisions")
+async def add_decision(user_id: str, decision_data: Dict[str, Any]):
+    """Add a decision to a user profile."""
+    try:
+        description = decision_data.get("description")
+        if not description:
+            raise HTTPException(status_code=400, detail="decision description is required")
+            
+        status = decision_data.get("status", "pending")
+        
+        profiles = load_profiles()
+        
+        if user_id not in profiles:
+            raise HTTPException(status_code=404, detail=f"Profile not found for user {user_id}")
+            
+        profile = profiles[user_id]
+        
+        # Initialize decisions list if it doesn't exist
+        if "decisions" not in profile:
+            profile["decisions"] = []
+            
+        # Add the decision
+        decision = {
+            "description": description,
+            "status": status,
+            "timestamp": time.time()
+        }
+        profile["decisions"].append(decision)
+        
+        profile["last_updated"] = time.time()
+        save_profiles(profiles)
+        
+        return profile
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding decision for {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@app.patch("/profiles/{user_id}/decisions/{decision_index}")
+async def update_decision_status(user_id: str, decision_index: int, status_data: Dict[str, str]):
+    """Update the status of a decision in a user profile."""
+    try:
+        new_status = status_data.get("status")
+        if not new_status:
+            raise HTTPException(status_code=400, detail="status is required")
+            
+        profiles = load_profiles()
+        
+        if user_id not in profiles:
+            raise HTTPException(status_code=404, detail=f"Profile not found for user {user_id}")
+            
+        profile = profiles[user_id]
+        
+        if "decisions" not in profile or decision_index >= len(profile["decisions"]):
+            raise HTTPException(status_code=404, detail=f"Decision at index {decision_index} not found")
+            
+        # Update the decision status
+        profile["decisions"][decision_index]["status"] = new_status
+        profile["last_updated"] = time.time()
+        save_profiles(profiles)
+        
+        return profile
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating decision status for {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/update-profiles-from-gemini")
+async def update_profiles_from_gemini():
+    """Force a manual update of user profiles using Gemini on the latest frame."""
+    try:
+        # Get the latest frame from Redis
+        all_keys = sorted([
+            k.decode() for k in redis_client.keys("test:*")
+            if not k.decode().endswith(":meta")
+        ])
+        
+        if not all_keys:
+            raise HTTPException(status_code=404, detail="No frames found in Redis")
+            
+        latest_frame_key = all_keys[-1]
+        frame_data = redis_client.get(latest_frame_key)
+        meta_data = redis_client.get(f"{latest_frame_key}:meta")
+        
+        if not frame_data or not meta_data:
+            raise HTTPException(status_code=404, detail="Frame data missing")
+            
+        # Parse metadata
+        try:
+            metadata = ast.literal_eval(meta_data.decode())
+        except:
+            metadata = {"error": "Could not parse metadata"}
+        
+        logger.info(f"Retrieved latest frame with key {latest_frame_key}, frame number: {metadata.get('frame_number')}")
+        
+        # Get existing profiles to match against
+        existing_profiles = {}
+        for user_id, profile in profile_manager.profiles.items():
+            if hasattr(profile, 'to_dict'):
+                existing_profiles[user_id] = profile.to_dict()
+            else:
+                existing_profiles[user_id] = profile
+                
+        if not existing_profiles:
+            logger.warning("No existing user profiles found for matching. Please create user profiles manually first.")
+            return {
+                "status": "warning",
+                "message": "No existing user profiles found for matching. Please create user profiles manually first."
+            }
+            
+        # Create a list of names to match against
+        profile_names = [
+            {"user_id": user_id, 
+             "name": profile.get("name", user_id), 
+             "role": profile.get("role", "")} 
+            for user_id, profile in existing_profiles.items()
+        ]
+        
+        # Use Gemini to analyze the frame for user profiles with fuzzy matching
+        logger.info("Querying Gemini to identify user profiles with fuzzy matching")
+        prompt = f"""Analyze this screen image and identify ONLY the users from the provided list:
+
+USER LIST FOR MATCHING:
+{json.dumps(profile_names, indent=2)}
+
+INSTRUCTIONS:
+1. ONLY identify users from the above list.
+2. Use fuzzy matching to identify users by name or role if exact matches aren't found.
+3. For each identified user, extract:
+   - Current workload (high/medium/low) if apparent
+   - Any blockers they might have
+   - Any decisions they need to make
+   - Activities they're engaged in
+
+Format your response as a structured JSON with this schema:
+{{
+    "users": [
+        {{
+            "user_id": "string", // MUST be one from the provided list
+            "workload": "string", // high, medium, or low
+            "blockers": ["string"],
+            "decisions": [
+                {{
+                    "description": "string",
+                    "status": "string" // "pending" or "made"
+                }}
+            ],
+            "activities": ["string"],
+            "skills": ["string"]
+        }}
+    ]
+}}
+
+IMPORTANT:
+- ONLY include users from the provided list that appear in the image
+- Match each user based on their name or role using fuzzy matching
+- If none of the users in the list appear in the image, return an empty users array"""
+        
+        # Make the Gemini API call - using the proper content format for Gemini
+        try:
+            logger.info("Sending image to Gemini for analysis")
+            
+            # Create a proper prompt that includes both text and image
+            content = [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(frame_data).decode('ascii')}}
+                    ]
+                }
+            ]
+            
+            response = model.generate_content(content)
+            user_profiles = response.text
+            
+            logger.info(f"Received response from Gemini: {user_profiles[:200]}...")
+            
+            # Try to parse the response as JSON
+            try:
+                # Clean up the response to remove any markdown code blocks or other formatting
+                cleaned_response = user_profiles.strip()
+                if cleaned_response.startswith("```json"):
+                    cleaned_response = cleaned_response.replace("```json", "", 1)
+                if cleaned_response.endswith("```"):
+                    cleaned_response = cleaned_response[:-3]
+                cleaned_response = cleaned_response.strip()
+                
+                user_profiles_json = json.loads(cleaned_response)
+                logger.info(f"Successfully parsed JSON response: {json.dumps(user_profiles_json, indent=2)[:200]}...")
+                
+                # Process user profiles
+                if "users" in user_profiles_json and isinstance(user_profiles_json["users"], list):
+                    logger.info(f"Found {len(user_profiles_json['users'])} users in the frame")
+                    
+                    for user_data in user_profiles_json["users"]:
+                        user_id = user_data.get("user_id")
+                        if not user_id:
+                            logger.warning("User data missing user_id, skipping")
+                            continue
+                            
+                        # Verify this user exists in our list
+                        if user_id not in existing_profiles:
+                            logger.warning(f"User {user_id} not found in existing profiles, skipping")
+                            continue
+                            
+                        # Get the profile from the manager
+                        profile = profile_manager.get_profile(user_id)
+                        logger.info(f"Processing user profile for user_id: {user_id}")
+                        
+                        # Update workload
+                        if "workload" in user_data and user_data["workload"]:
+                            profile.update_workload(user_data["workload"])
+                            
+                        # Update blockers
+                        if "blockers" in user_data and isinstance(user_data["blockers"], list):
+                            for blocker in user_data["blockers"]:
+                                profile.add_blocker(blocker)
+                                
+                        # Update decisions
+                        if "decisions" in user_data and isinstance(user_data["decisions"], list):
+                            for decision in user_data["decisions"]:
+                                description = decision.get("description", "")
+                                status = decision.get("status", "pending")
+                                if description:
+                                    profile.add_decision(description, status)
+                                    
+                        # Update activities
+                        if "activities" in user_data and isinstance(user_data["activities"], list):
+                            for activity in user_data["activities"]:
+                                profile.add_activity(activity)
+                                
+                        # Update skills
+                        if "skills" in user_data and isinstance(user_data["skills"], list):
+                            for skill in user_data["skills"]:
+                                if skill not in profile.skills:
+                                    profile.skills.append(skill)
+                                
+                        # Update last seen timestamp
+                        timestamp = metadata.get("timestamp")
+                        profile.update_last_seen(timestamp)
+                        
+                        # Update the profile in the manager
+                        profile_manager.update_profile(profile)
+                        logger.info(f"Updated profile for user {user_id}")
+                
+                return {
+                    "status": "success", 
+                    "message": f"Updated user profiles from Gemini", 
+                    "users": user_profiles_json.get("users", [])
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse Gemini response as JSON: {e}")
+                cleaned_text = user_profiles.replace("\n", " ")[:200]
+                logger.error(f"Raw response snippet: {cleaned_text}")
+                return {
+                    "status": "error",
+                    "message": "Failed to parse Gemini response as JSON",
+                    "raw_response": user_profiles
+                }
+                
+        except Exception as e:
+            logger.error(f"Error calling Gemini API: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": f"Error calling Gemini API: {str(e)}",
+                "details": str(e)
+            }
+        
+    except Exception as e:
+        logger.error(f"Error updating profiles from Gemini: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Error updating profiles from Gemini: {str(e)}",
+            "details": str(e)
+        } 

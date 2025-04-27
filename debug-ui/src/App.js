@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Container, Typography, Grid, Paper, CircularProgress, LinearProgress, Divider, Button, TextField, IconButton, Tooltip } from '@mui/material';
+import { Box, Container, Typography, Grid, Paper, CircularProgress, LinearProgress, Divider, Button, TextField, IconButton, Tooltip, Tabs, Tab } from '@mui/material';
 import { List, AutoSizer } from 'react-virtualized';
 import axios from 'axios';
 import { Timeline, TimelineItem, TimelineSeparator, TimelineConnector, TimelineContent, TimelineDot } from '@mui/lab';
@@ -10,6 +10,7 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import StopIcon from '@mui/icons-material/Stop';
 import MindMap from './components/MindMap';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import UserProfilesDashboard from './components/UserProfilesDashboard';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -1016,6 +1017,11 @@ function App() {
   const [manualRefreshEnabled, setManualRefreshEnabled] = useState(true);
   const [isTextProcessing, setIsTextProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [selectedTab, setSelectedTab] = useState(0);
+  
+  const handleTabChange = (event, newValue) => {
+    setSelectedTab(newValue);
+  };
 
   useEffect(() => {
     fetchFrames();
@@ -2232,15 +2238,103 @@ function App() {
     );
   }
 
+  const renderContent = () => {
+    switch (selectedTab) {
+      case 0: // Context Timeline
+        return (
+          <>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={4}>
+                <Paper sx={{ p: 2, height: '100%' }}>
+                  <Typography variant="h6">Frame Information</Typography>
+                  <Typography>Total Frames: {totalFrames}</Typography>
+                  {context?.buffer_stats && (
+                    <>
+                      <BufferHealthIndicator health={context.buffer_stats.buffer_health} maxFrames={totalFrames} currentFrames={context.buffer_stats.frames_in_buffer} />
+                      <BufferStats stats={context.buffer_stats} />
+                    </>
+                  )}
+                </Paper>
+              </Grid>
+              
+              <Grid item xs={12} md={8}>
+                <Paper sx={{ p: 2, maxHeight: 600, overflow: 'auto' }}>
+                  <Typography variant="h6">Context Timeline</Typography>
+                  {contextError ? (
+                    <Typography color="error">{contextError}</Typography>
+                  ) : (
+                    <ContextTimeline context={context} />
+                  )}
+                </Paper>
+              </Grid>
+            </Grid>
+            
+            <ChatInterface context={context} currentFrame={currentFrame} />
+          </>
+        );
+      case 1: // Mind Map
+        return (
+          <>
+            <Box sx={{ mt: 3 }}>
+              {mindMapData && (
+                <MindMap 
+                  data={mindMapData} 
+                  onRefresh={handleManualRefresh}
+                />
+              )}
+            </Box>
+            
+            <ChatInterface context={context} currentFrame={currentFrame} />
+          </>
+        );
+      case 2: // Profiles Dashboard
+        return (
+          <>
+            <UserProfilesDashboard />
+            
+            <ChatInterface context={context} currentFrame={currentFrame} />
+          </>
+        );
+      case 3: // Text Processing
+        return (
+          <>
+            <TextStreamInput onDataCleared={() => setIsTextProcessing(false)} />
+            <LiveTextSummary isProcessing={isTextProcessing} />
+            
+            <ChatInterface context={context} currentFrame={currentFrame} />
+          </>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <Container maxWidth="xl" sx={{ py: 4 }}>
       <Grid container spacing={3}>
-        {/* Existing UI Components */}
         <Grid item xs={12}>
           <Paper sx={{ p: 3 }}>
-            <Typography variant="h4" component="h1" gutterBottom>
-              Perspectiv Screen Understanding Demo
-            </Typography>
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+              <Tabs value={selectedTab} onChange={handleTabChange} aria-label="dashboard tabs">
+                <Tab label="Context Timeline" />
+                <Tab label="Mind Map" />
+                <Tab label="User Profiles" />
+                <Tab label="Text Processing" />
+              </Tabs>
+            </Box>
+          
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
+              <Typography variant="h4" component="h1" gutterBottom>
+                Perspectiv Screen Understanding Demo
+              </Typography>
+              <Button 
+                variant="outlined" 
+                startIcon={<RefreshIcon />}
+                onClick={handleManualRefresh}
+              >
+                Refresh
+              </Button>
+            </Box>
             
             <VideoUploadControls 
               onDataCleared={handleDataCleared}
@@ -2251,53 +2345,12 @@ function App() {
             ) : error ? (
               <Typography color="error">{error}</Typography>
             ) : (
-              <>
-                <Grid container spacing={3}>
-                  <Grid item xs={12} md={4}>
-                    <Paper sx={{ p: 2, height: '100%' }}>
-                      <Typography variant="h6">Frame Information</Typography>
-                      <Typography>Total Frames: {totalFrames}</Typography>
-                      {context?.buffer_stats && (
-                        <>
-                          <BufferHealthIndicator health={context.buffer_stats.buffer_health} maxFrames={totalFrames} currentFrames={context.buffer_stats.frames_in_buffer} />
-                          <BufferStats stats={context.buffer_stats} />
-                        </>
-                      )}
-                    </Paper>
-                  </Grid>
-                  
-                  <Grid item xs={12} md={8}>
-                    <Paper sx={{ p: 2, maxHeight: 600, overflow: 'auto' }}>
-                      <Typography variant="h6">Context Timeline</Typography>
-                      {contextError ? (
-                        <Typography color="error">{contextError}</Typography>
-                      ) : (
-                        <ContextTimeline context={context} />
-                      )}
-                    </Paper>
-                  </Grid>
-                </Grid>
-                
-                <ChatInterface 
-                  context={context}
-                  currentFrame={currentFrame}
-                />
-
-                {mindMapData && (
-                  <Box sx={{ mt: 3 }}>
-                    <MindMap 
-                      data={mindMapData} 
-                      onRefresh={handleManualRefresh}
-                    />
-                  </Box>
-                )}
-              </>
+              renderContent()
             )}
           </Paper>
         </Grid>
       </Grid>
-      <TextStreamInput onDataCleared={() => setIsTextProcessing(false)} />
-      <LiveTextSummary isProcessing={isTextProcessing} />
+      
       {/* Recording status indicator */}
       {isRecording && (
         <Box sx={{ 
